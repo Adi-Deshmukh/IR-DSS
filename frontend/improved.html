@@ -125,6 +125,80 @@
         
         .train-running { animation: pulse 2s infinite; }
         
+        /* Track-specific styling */
+        .track-1 { 
+            border: 2px solid #3498db; 
+            border-radius: 50%; 
+            background: rgba(52, 152, 219, 0.1);
+        }
+        
+        .track-2 { 
+            border: 2px solid #e74c3c; 
+            border-radius: 50%; 
+            background: rgba(231, 76, 60, 0.1);
+        }
+        
+        /* Notification system */
+        .notification-container {
+            position: fixed;
+            top: 20px;
+            left: 20px;
+            z-index: 2000;
+            max-width: 400px;
+        }
+        
+        .notification {
+            background: white;
+            border-left: 4px solid #3498db;
+            border-radius: 6px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+            margin-bottom: 10px;
+            padding: 12px 16px;
+            transform: translateX(-100%);
+            animation: slideIn 0.3s ease forwards;
+            position: relative;
+        }
+        
+        .notification.arriving {
+            border-left-color: #27ae60;
+        }
+        
+        .notification.departing {
+            border-left-color: #f39c12;
+        }
+        
+        .notification.dwelling {
+            border-left-color: #9b59b6;
+        }
+        
+        .notification-message {
+            font-size: 14px;
+            color: #2c3e50;
+            margin: 0;
+        }
+        
+        .notification-time {
+            font-size: 12px;
+            color: #7f8c8d;
+            margin-top: 4px;
+        }
+        
+        @keyframes slideIn {
+            to { transform: translateX(0); }
+        }
+        
+        @keyframes slideOut {
+            to { transform: translateX(-100%); }
+        }
+        
+        .notification.removing {
+            animation: slideOut 0.3s ease forwards;
+        }
+        
+        /* Train type styling */
+        .freight-train { filter: hue-rotate(45deg); }
+        .passenger-train { filter: brightness(1.1); }
+        
         @keyframes pulse {
             0% { transform: scale(1); }
             50% { transform: scale(1.1); }
@@ -138,6 +212,9 @@
     </style>
 </head>
 <body>
+    <!-- Notification Container -->
+    <div class="notification-container" id="notificationContainer"></div>
+    
     <!-- Map Container -->
     <div id="map"></div>
 
@@ -279,6 +356,58 @@
     <script>
         const BACKEND_URL = 'http://localhost:5000';
         let map, trainMarkers = {}, updateInterval, trackLayers = [], stationMarkers = [];
+        let displayedEvents = new Set(); // Track displayed events to avoid duplicates
+
+        // Notification system
+        function showNotification(event) {
+            const container = document.getElementById('notificationContainer');
+            
+            // Check if this event was already displayed
+            const eventId = `${event.train_id}-${event.event_type}-${event.station}-${event.timestamp}`;
+            if (displayedEvents.has(eventId)) {
+                return;
+            }
+            displayedEvents.add(eventId);
+            
+            const notification = document.createElement('div');
+            notification.className = `notification ${event.event_type}`;
+            
+            // Format timestamp
+            const minutes = Math.floor(event.timestamp / 60);
+            const seconds = Math.floor(event.timestamp % 60);
+            const timeStr = `${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
+            
+            notification.innerHTML = `
+                <div class="notification-message">${event.message}</div>
+                <div class="notification-time">Time: ${timeStr}</div>
+            `;
+            
+            container.appendChild(notification);
+            
+            // Auto-remove after 5 seconds
+            setTimeout(() => {
+                notification.classList.add('removing');
+                setTimeout(() => {
+                    if (notification.parentNode) {
+                        notification.parentNode.removeChild(notification);
+                    }
+                }, 300);
+            }, 5000);
+        }
+
+        async function fetchTrainEvents() {
+            try {
+                const response = await fetch(`${BACKEND_URL}/train_events`);
+                const data = await response.json();
+                
+                // Show new events
+                data.events.forEach(event => {
+                    showNotification(event);
+                });
+            } catch (error) {
+                console.error('Error fetching train events:', error);
+            }
+        }
 
         // Initialize map
         map = L.map('map').setView([12.6, 77.2], 9);
@@ -480,12 +609,15 @@
                 // Update train markers
                 Object.entries(data.positions).forEach(([trainId, pos]) => {
                     const icon = TRAIN_ICONS[pos.status] || '🚂';
+                    const trackClass = `track-${pos.assigned_track || 1}`;
+                    const typeClass = `${pos.train_type || 'passenger'}-train`;
+                    const statusClass = pos.status === 'running' ? 'train-running' : '';
                     
                     if (trainMarkers[trainId]) {
                         // Update existing marker
                         trainMarkers[trainId].setLatLng([pos.lat, pos.lon]);
                         trainMarkers[trainId].setIcon(L.divIcon({
-                            html: `<div class="train-marker ${pos.status === 'running' ? 'train-running' : ''}">${icon}</div>`,
+                            html: `<div class="train-marker ${statusClass} ${trackClass} ${typeClass}">${icon}</div>`,
                             iconSize: [24, 24],
                             iconAnchor: [12, 12],
                             className: 'custom-train-icon'
@@ -494,7 +626,7 @@
                         // Create new marker
                         const marker = L.marker([pos.lat, pos.lon], {
                             icon: L.divIcon({
-                                html: `<div class="train-marker ${pos.status === 'running' ? 'train-running' : ''}">${icon}</div>`,
+                                html: `<div class="train-marker ${statusClass} ${trackClass} ${typeClass}">${icon}</div>`,
                                 iconSize: [24, 24],
                                 iconAnchor: [12, 12],
                                 className: 'custom-train-icon'
@@ -508,11 +640,14 @@
                     // Update popup
                     trainMarkers[trainId].bindPopup(`
                         <b>🚂 Train ${trainId}</b><br>
-                        Status: <strong>${pos.status}</strong><br>
-                        Speed: ${pos.speed} km/h<br>
-                        Progress: ${(pos.progress * 100).toFixed(1)}%<br>
-                        Delay: ${pos.delay.toFixed(1)} min<br>
-                        Next: ${pos.next_station}
+                        <strong>Type:</strong> ${pos.train_type}<br>
+                        <strong>Status:</strong> ${pos.status}<br>
+                        <strong>Track:</strong> ${pos.track_type}<br>
+                        <strong>Speed:</strong> ${pos.speed.toFixed(1)} km/h<br>
+                        <strong>Progress:</strong> ${(pos.progress * 100).toFixed(1)}%<br>
+                        <strong>Delay:</strong> ${pos.delay.toFixed(1)} min<br>
+                        <strong>Current:</strong> ${pos.current_segment}<br>
+                        <strong>Next:</strong> ${pos.next_station}
                     `);
                 });
                 
@@ -555,7 +690,7 @@
             try {
                 await fetch(`${BACKEND_URL}/start_sim`, {method: 'POST'});
                 document.getElementById('status').textContent = 'Running';
-                updateInterval = setInterval(updatePositions, 500); // Update every 500ms
+                updateInterval = setInterval(updatePositions, 1000); // Update every 1000ms for smoother movement
                 showNotification('Simulation started!', 'success');
             } catch (error) {
                 console.error('Error starting simulation:', error);
