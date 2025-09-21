@@ -1,0 +1,16 @@
+train_id,dep_time,arr_time,speed_kmh,stops,thru_dest,priority,train_type
+12614,0,180,65,"['SBC','Kengeri','MYA','MYS']",,high,passenger
+12615,15,195,65,"['SBC','Kengeri','MYA','MYS']",,high,passenger
+16535,30,240,45,"['SBC','Bangarpet','Kengeri','MYA','Channapatna','MYS']",,medium,passenger
+56901,45,300,35,"['SBC','Kengeri','MYA']",Erode,low,freight
+12616,60,240,65,"['SBC','Kengeri','MYA','MYS']",,high,passenger
+16536,75,285,45,"['SBC','Bangarpet','Kengeri','MYA','Channapatna','MYS']",,medium,passenger
+56902,90,345,35,"['SBC','Kengeri','MYA']",Chennai,low,freight
+12617,105,285,65,"['SBC','Kengeri','MYA','MYS']",,high,passenger
+16537,120,330,45,"['SBC','Bangarpet','Kengeri','MYA','Channapatna','MYS']",,medium,passenger
+56903,135,390,35,"['SBC','Kengeri','MYA']",Coimbatore,low,freight
+12618,150,330,65,"['SBC','Kengeri','MYA','MYS']",,high,passenger
+16538,165,375,45,"['SBC','Bangarpet','Kengeri','MYA','Channapatna','MYS']",,medium,passenger
+56904,180,435,35,"['SBC','Kengeri','MYA']",Erode,low,freight
+12619,195,375,65,"['SBC','Kengeri','MYA','MYS']",,high,passenger
+16539,210,420,45,"['SBC','Bangarpet','Kengeri','MYA','Channapatna','MYS']",,medium,passenger

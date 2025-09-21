@@ -1,0 +1,692 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Railway DSS - Improved with Real Data</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <style>
+        body { margin: 0; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
+        #map { height: 100vh; width: 100%; }
+        
+        .control-panel {
+            position: absolute; top: 10px; right: 10px; background: white;
+            padding: 20px; border-radius: 12px; box-shadow: 0 4px 20px rgba(0,0,0,0.15);
+            z-index: 1000; min-width: 300px; max-height: 90vh; overflow-y: auto;
+        }
+        
+        .control-section {
+            margin-bottom: 20px; padding: 15px; background: #f8f9fa;
+            border-radius: 8px; border-left: 4px solid #3498db;
+        }
+        
+        .control-section h3 {
+            margin: 0 0 15px 0; color: #2c3e50; font-size: 16px;
+            text-transform: uppercase; letter-spacing: 0.5px;
+        }
+        
+        .btn {
+            padding: 10px 16px; margin: 5px; border: none; border-radius: 6px;
+            cursor: pointer; font-weight: 600; transition: all 0.2s;
+            text-transform: uppercase; letter-spacing: 0.3px;
+        }
+        
+        .btn-success { background: #27ae60; color: white; }
+        .btn-success:hover { background: #229954; transform: translateY(-1px); }
+        .btn-warning { background: #f39c12; color: white; }
+        .btn-warning:hover { background: #e67e22; transform: translateY(-1px); }
+        .btn-danger { background: #e74c3c; color: white; }
+        .btn-danger:hover { background: #c0392b; transform: translateY(-1px); }
+        .btn-primary { background: #3498db; color: white; }
+        .btn-primary:hover { background: #2980b9; transform: translateY(-1px); }
+        
+        .status-display {
+            background: white; padding: 15px; border-radius: 8px;
+            margin: 10px 0; border: 1px solid #ddd;
+        }
+        
+        .status-item {
+            display: flex; justify-content: space-between;
+            margin-bottom: 10px; font-size: 14px;
+        }
+        
+        .status-label { font-weight: 600; color: #555; }
+        .status-value { color: #2c3e50; font-weight: 500; }
+        
+        .speed-control {
+            margin: 15px 0;
+        }
+        
+        .speed-slider {
+            width: 100%; margin: 10px 0;
+        }
+        
+        .speed-display {
+            text-align: center; font-size: 18px; font-weight: bold;
+            color: #3498db; margin: 10px 0;
+        }
+        
+        .form-group {
+            margin-bottom: 15px;
+        }
+        
+        .form-group label {
+            display: block; margin-bottom: 5px; font-weight: 600;
+            color: #555; font-size: 12px;
+        }
+        
+        .form-control {
+            width: 100%; padding: 8px 12px; border: 1px solid #ddd;
+            border-radius: 4px; font-size: 13px;
+        }
+        
+        .train-info {
+            position: absolute; bottom: 10px; right: 10px;
+            background: white; padding: 15px; border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1); z-index: 1000;
+            min-width: 250px; display: none;
+        }
+        
+        .legend {
+            position: absolute; bottom: 10px; left: 10px;
+            background: white; padding: 15px; border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1); z-index: 1000;
+        }
+        
+        .legend h4 { margin: 0 0 10px 0; color: #2c3e50; font-size: 14px; }
+        
+        .legend-item {
+            display: flex; align-items: center; margin-bottom: 8px; font-size: 12px;
+        }
+        
+        .legend-icon { margin-right: 8px; font-size: 16px; }
+        
+        .notification {
+            position: absolute; top: 10px; left: 50%; transform: translateX(-50%);
+            padding: 12px 20px; border-radius: 6px; color: white;
+            font-weight: 500; z-index: 1001; opacity: 0;
+            transition: opacity 0.3s ease;
+        }
+        
+        .notification.show { opacity: 1; }
+        .notification.success { background: #27ae60; }
+        .notification.error { background: #e74c3c; }
+        .notification.info { background: #3498db; }
+        
+        /* Train marker animations */
+        .train-marker {
+            font-size: 20px; transition: all 0.3s ease;
+            filter: drop-shadow(2px 2px 4px rgba(0,0,0,0.3));
+        }
+        
+        .train-marker:hover {
+            transform: scale(1.3); cursor: pointer;
+        }
+        
+        .train-running { animation: pulse 2s infinite; }
+        
+        @keyframes pulse {
+            0% { transform: scale(1); }
+            50% { transform: scale(1.1); }
+            100% { transform: scale(1); }
+        }
+        
+        /* Responsive design */
+        @media (max-width: 768px) {
+            .control-panel { right: 5px; top: 5px; min-width: 280px; }
+        }
+    </style>
+</head>
+<body>
+    <!-- Map Container -->
+    <div id="map"></div>
+
+    <!-- Control Panel -->
+    <div class="control-panel">
+        <h2 style="margin: 0 0 20px 0; color: #2c3e50;">🚂 Railway DSS</h2>
+        
+        <!-- Simulation Controls -->
+        <div class="control-section">
+            <h3>Simulation Control</h3>
+            <div>
+                <button id="startBtn" class="btn btn-success">▶ Start</button>
+                <button id="stopBtn" class="btn btn-warning">⏸ Stop</button>
+                <button id="resetBtn" class="btn btn-danger">⏹ Reset</button>
+            </div>
+            
+            <div class="status-display">
+                <div class="status-item">
+                    <span class="status-label">Status:</span>
+                    <span id="status" class="status-value">Stopped</span>
+                </div>
+                <div class="status-item">
+                    <span class="status-label">Sim Time:</span>
+                    <span id="simTime" class="status-value">00:00</span>
+                </div>
+                <div class="status-item">
+                    <span class="status-label">Active Trains:</span>
+                    <span id="activeTrains" class="status-value">0</span>
+                </div>
+                <div class="status-item">
+                    <span class="status-label">Completed:</span>
+                    <span id="completedTrains" class="status-value">0</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Speed Control -->
+        <div class="control-section">
+            <h3>Simulation Speed</h3>
+            <div class="speed-control">
+                <div class="speed-display">
+                    <span id="speedValue">1.0</span>x Speed
+                </div>
+                <input type="range" id="speedSlider" class="speed-slider" 
+                       min="0.1" max="5.0" step="0.1" value="1.0">
+                <div style="display: flex; justify-content: space-between; font-size: 11px; color: #666;">
+                    <span>0.1x (Slow)</span>
+                    <span>5.0x (Fast)</span>
+                </div>
+            </div>
+            <button id="normalSpeedBtn" class="btn btn-primary">Reset to 1x</button>
+        </div>
+
+        <!-- Train Management -->
+        <div class="control-section">
+            <h3>Train Management</h3>
+            <div class="form-group">
+                <label for="trainSelect">Select Train:</label>
+                <select id="trainSelect" class="form-control">
+                    <option value="">Choose train...</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label for="delayInput">Add Delay (minutes):</label>
+                <input type="number" id="delayInput" class="form-control" 
+                       value="10" min="1" max="120">
+            </div>
+            <button id="addDelayBtn" class="btn btn-warning">⚠ Add Delay</button>
+        </div>
+
+        <!-- Special Train -->
+        <div class="control-section">
+            <h3>Add Special Train</h3>
+            <div class="form-group">
+                <label for="specialTrainId">Train ID:</label>
+                <input type="text" id="specialTrainId" class="form-control" 
+                       placeholder="e.g., SP001">
+            </div>
+            <div class="form-group">
+                <label for="specialDepTime">Departure (minutes):</label>
+                <input type="number" id="specialDepTime" class="form-control" 
+                       value="30" min="0">
+            </div>
+            <button id="addSpecialBtn" class="btn btn-primary">🚆 Add Train</button>
+        </div>
+
+        <!-- Quick Actions -->
+        <div class="control-section">
+            <h3>Quick Actions</h3>
+            <button id="focusTrainsBtn" class="btn btn-primary">🎯 Focus Trains</button>
+            <button id="refreshBtn" class="btn btn-primary">🔄 Refresh</button>
+        </div>
+    </div>
+
+    <!-- Train Info Panel -->
+    <div id="trainInfo" class="train-info">
+        <h4 style="margin: 0 0 10px 0;">Train Information</h4>
+        <div id="trainDetails"></div>
+    </div>
+
+    <!-- Legend -->
+    <div class="legend">
+        <h4>Legend</h4>
+        <div class="legend-item">
+            <span class="legend-icon">🚂</span>
+            <span>Running Train</span>
+        </div>
+        <div class="legend-item">
+            <span class="legend-icon">🚃</span>
+            <span>Train at Station</span>
+        </div>
+        <div class="legend-item">
+            <span class="legend-icon">⏸️</span>
+            <span>Waiting Train</span>
+        </div>
+        <div class="legend-item">
+            <span class="legend-icon">🏁</span>
+            <span>Completed Journey</span>
+        </div>
+        <div class="legend-item">
+            <span class="legend-icon" style="color: #e74c3c;">🔴</span>
+            <span>Station</span>
+        </div>
+        <div class="legend-item">
+            <span class="legend-icon" style="color: #2c3e50;">━</span>
+            <span>Main Railway Track</span>
+        </div>
+        <div class="legend-item">
+            <span class="legend-icon" style="color: #e67e22;">━</span>
+            <span>Spur Track</span>
+        </div>
+    </div>
+
+    <!-- Notification -->
+    <div id="notification" class="notification"></div>
+
+    <!-- Scripts -->
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script>
+        const BACKEND_URL = 'http://localhost:5000';
+        let map, trainMarkers = {}, updateInterval, trackLayers = [], stationMarkers = [];
+
+        // Initialize map
+        map = L.map('map').setView([12.6, 77.2], 9);
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            attribution: '© OpenStreetMap contributors'
+        }).addTo(map);
+
+        // Train status icons
+        const TRAIN_ICONS = {
+            'running': '🚂',
+            'dwelling': '🚃', 
+            'waiting': '⏸️',
+            'completed': '🏁'
+        };
+
+        // Load data and setup
+        async function init() {
+            try {
+                await loadTracks();
+                await loadStations();
+                await loadTrainList();
+                setupEventListeners();
+                showNotification('Railway DSS loaded with real data!', 'success');
+            } catch (error) {
+                console.error('Error initializing Railway DSS:', error);
+                showNotification('Error loading simulation data. Please check if backend is running.', 'error');
+            }
+        }
+
+        async function loadTracks() {
+            try {
+                const response = await fetch(`${BACKEND_URL}/tracks`);
+                const data = await response.json();
+                
+                let mainTracks = 0;
+                let spurTracks = 0;
+                
+                Object.values(data.tracks).forEach(track => {
+                    if (track.coordinates && track.coordinates.length > 1) {
+                        const coords = track.coordinates.map(c => [c[1], c[0]]);
+                        
+                        // Different colors based on track type and service
+                        let color = '#2c3e50'; // Default main line
+                        let weight = 4;
+                        let opacity = 0.8;
+                        
+                        if (track.service === 'spur') {
+                            color = '#e67e22'; // Orange for spurs
+                            weight = 2;
+                            opacity = 0.6;
+                            spurTracks++;
+                        } else {
+                            color = '#2c3e50'; // Dark blue for main lines
+                            weight = 4;
+                            opacity = 0.8;
+                            mainTracks++;
+                        }
+                        
+                        const layer = L.polyline(coords, {
+                            color: color,
+                            weight: weight,
+                            opacity: opacity
+                        }).addTo(map);
+                        
+                        layer.bindPopup(`
+                            <b>${track.name}</b><br>
+                            Type: ${track.track_type}<br>
+                            Service: ${track.service || 'main'}<br>
+                            Length: ${track.length_km.toFixed(1)} km<br>
+                            Segment: ${track.segment}
+                        `);
+                        
+                        trackLayers.push(layer);
+                    }
+                });
+                
+                console.log(`Loaded ${trackLayers.length} track segments (${mainTracks} main, ${spurTracks} spurs)`);
+                showNotification(`Loaded ${trackLayers.length} track segments from GeoJSON`, 'info');
+            } catch (error) {
+                console.error('Error loading tracks:', error);
+            }
+        }
+
+        async function loadStations() {
+            try {
+                const response = await fetch(`${BACKEND_URL}/stations`);
+                const data = await response.json();
+                
+                Object.values(data.stations).forEach(station => {
+                    const marker = L.circleMarker([station.lat, station.lon], {
+                        radius: station.major ? 12 : 8,
+                        fillColor: '#e74c3c',
+                        color: '#fff',
+                        weight: 3,
+                        opacity: 1,
+                        fillOpacity: 0.9
+                    }).addTo(map);
+                    
+                    marker.bindPopup(`
+                        <b>${station.name}</b><br>
+                        Code: ${station.code}<br>
+                        Platforms: ${station.platforms}<br>
+                        Type: ${station.major ? 'Major Junction' : 'Station'}
+                    `);
+                    
+                    stationMarkers.push(marker);
+                });
+                
+                console.log(`Loaded ${stationMarkers.length} stations`);
+            } catch (error) {
+                console.error('Error loading stations:', error);
+            }
+        }
+
+        async function loadTrainList() {
+            try {
+                const response = await fetch(`${BACKEND_URL}/positions`);
+                const data = await response.json();
+                
+                const trainSelect = document.getElementById('trainSelect');
+                trainSelect.innerHTML = '<option value="">Choose train...</option>';
+                
+                // Get train list from backend
+                const backendResponse = await fetch(`${BACKEND_URL}/`);
+                const backendData = await backendResponse.json();
+                
+                // For now, add some sample train IDs
+                const sampleTrains = ['12614', '12615', '16535', '56901', '12616'];
+                sampleTrains.forEach(trainId => {
+                    const option = document.createElement('option');
+                    option.value = trainId;
+                    option.textContent = `Train ${trainId}`;
+                    trainSelect.appendChild(option);
+                });
+                
+            } catch (error) {
+                console.error('Error loading train list:', error);
+            }
+        }
+
+        function setupEventListeners() {
+            // Simulation controls
+            document.getElementById('startBtn').addEventListener('click', startSimulation);
+            document.getElementById('stopBtn').addEventListener('click', stopSimulation);
+            document.getElementById('resetBtn').addEventListener('click', resetSimulation);
+            
+            // Speed control
+            const speedSlider = document.getElementById('speedSlider');
+            speedSlider.addEventListener('input', function() {
+                const speed = parseFloat(this.value);
+                document.getElementById('speedValue').textContent = speed.toFixed(1);
+                setSimulationSpeed(speed);
+            });
+            
+            document.getElementById('normalSpeedBtn').addEventListener('click', function() {
+                speedSlider.value = 1.0;
+                document.getElementById('speedValue').textContent = '1.0';
+                setSimulationSpeed(1.0);
+            });
+            
+            // Train management
+            document.getElementById('addDelayBtn').addEventListener('click', addDelay);
+            document.getElementById('addSpecialBtn').addEventListener('click', addSpecialTrain);
+            
+            // Quick actions
+            document.getElementById('focusTrainsBtn').addEventListener('click', focusOnTrains);
+            document.getElementById('refreshBtn').addEventListener('click', refreshData);
+        }
+
+        async function setSimulationSpeed(speed) {
+            try {
+                await fetch(`${BACKEND_URL}/set_speed`, {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({speed: speed})
+                });
+                showNotification(`Speed set to ${speed.toFixed(1)}x`, 'info');
+            } catch (error) {
+                console.error('Error setting speed:', error);
+            }
+        }
+
+        async function updatePositions() {
+            try {
+                const response = await fetch(`${BACKEND_URL}/positions`);
+                const data = await response.json();
+                
+                // Update UI
+                document.getElementById('simTime').textContent = 
+                    Math.floor(data.simulation_time / 60).toString().padStart(2, '0') + ':' +
+                    (Math.floor(data.simulation_time) % 60).toString().padStart(2, '0');
+                
+                const activeCount = Object.values(data.positions).filter(p => p.status === 'running').length;
+                const completedCount = Object.values(data.positions).filter(p => p.status === 'completed').length;
+                
+                document.getElementById('activeTrains').textContent = activeCount;
+                document.getElementById('completedTrains').textContent = completedCount;
+                
+                // Update train markers
+                Object.entries(data.positions).forEach(([trainId, pos]) => {
+                    const icon = TRAIN_ICONS[pos.status] || '🚂';
+                    
+                    if (trainMarkers[trainId]) {
+                        // Update existing marker
+                        trainMarkers[trainId].setLatLng([pos.lat, pos.lon]);
+                        trainMarkers[trainId].setIcon(L.divIcon({
+                            html: `<div class="train-marker ${pos.status === 'running' ? 'train-running' : ''}">${icon}</div>`,
+                            iconSize: [24, 24],
+                            iconAnchor: [12, 12],
+                            className: 'custom-train-icon'
+                        }));
+                    } else {
+                        // Create new marker
+                        const marker = L.marker([pos.lat, pos.lon], {
+                            icon: L.divIcon({
+                                html: `<div class="train-marker ${pos.status === 'running' ? 'train-running' : ''}">${icon}</div>`,
+                                iconSize: [24, 24],
+                                iconAnchor: [12, 12],
+                                className: 'custom-train-icon'
+                            })
+                        }).addTo(map);
+                        
+                        marker.on('click', () => showTrainInfo(trainId, pos));
+                        trainMarkers[trainId] = marker;
+                    }
+                    
+                    // Update popup
+                    trainMarkers[trainId].bindPopup(`
+                        <b>🚂 Train ${trainId}</b><br>
+                        Status: <strong>${pos.status}</strong><br>
+                        Speed: ${pos.speed} km/h<br>
+                        Progress: ${(pos.progress * 100).toFixed(1)}%<br>
+                        Delay: ${pos.delay.toFixed(1)} min<br>
+                        Next: ${pos.next_station}
+                    `);
+                });
+                
+                // Remove old markers
+                Object.keys(trainMarkers).forEach(trainId => {
+                    if (!data.positions[trainId]) {
+                        map.removeLayer(trainMarkers[trainId]);
+                        delete trainMarkers[trainId];
+                    }
+                });
+                
+            } catch (error) {
+                console.error('Error updating positions:', error);
+            }
+        }
+
+        function showTrainInfo(trainId, position) {
+            const infoPanel = document.getElementById('trainInfo');
+            const details = document.getElementById('trainDetails');
+            
+            details.innerHTML = `
+                <div><strong>Train:</strong> ${trainId}</div>
+                <div><strong>Status:</strong> ${position.status}</div>
+                <div><strong>Speed:</strong> ${position.speed} km/h</div>
+                <div><strong>Progress:</strong> ${(position.progress * 100).toFixed(1)}%</div>
+                <div><strong>Delay:</strong> ${position.delay.toFixed(1)} minutes</div>
+                <div><strong>Next Station:</strong> ${position.next_station}</div>
+                <div><strong>Track:</strong> ${position.track_type}</div>
+            `;
+            
+            infoPanel.style.display = 'block';
+            
+            // Hide after 5 seconds
+            setTimeout(() => {
+                infoPanel.style.display = 'none';
+            }, 5000);
+        }
+
+        async function startSimulation() {
+            try {
+                await fetch(`${BACKEND_URL}/start_sim`, {method: 'POST'});
+                document.getElementById('status').textContent = 'Running';
+                updateInterval = setInterval(updatePositions, 500); // Update every 500ms
+                showNotification('Simulation started!', 'success');
+            } catch (error) {
+                console.error('Error starting simulation:', error);
+                showNotification('Error starting simulation', 'error');
+            }
+        }
+
+        async function stopSimulation() {
+            try {
+                await fetch(`${BACKEND_URL}/stop_sim`, {method: 'POST'});
+                document.getElementById('status').textContent = 'Stopped';
+                if (updateInterval) clearInterval(updateInterval);
+                showNotification('Simulation stopped', 'info');
+            } catch (error) {
+                console.error('Error stopping simulation:', error);
+            }
+        }
+
+        async function resetSimulation() {
+            try {
+                await fetch(`${BACKEND_URL}/reset_sim`, {method: 'POST'});
+                document.getElementById('status').textContent = 'Reset';
+                document.getElementById('simTime').textContent = '00:00';
+                document.getElementById('activeTrains').textContent = '0';
+                document.getElementById('completedTrains').textContent = '0';
+                
+                // Clear train markers
+                Object.values(trainMarkers).forEach(marker => map.removeLayer(marker));
+                trainMarkers = {};
+                
+                if (updateInterval) clearInterval(updateInterval);
+                showNotification('Simulation reset', 'info');
+            } catch (error) {
+                console.error('Error resetting simulation:', error);
+            }
+        }
+
+        async function addDelay() {
+            const trainId = document.getElementById('trainSelect').value;
+            const delay = parseFloat(document.getElementById('delayInput').value);
+            
+            if (!trainId) {
+                showNotification('Please select a train', 'error');
+                return;
+            }
+            
+            try {
+                const response = await fetch(`${BACKEND_URL}/disrupt`, {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        train_id: trainId,
+                        delay_minutes: delay
+                    })
+                });
+                
+                const result = await response.json();
+                if (result.success) {
+                    showNotification(`Added ${delay} min delay to ${trainId}`, 'success');
+                } else {
+                    showNotification(result.message, 'error');
+                }
+            } catch (error) {
+                console.error('Error adding delay:', error);
+                showNotification('Error adding delay', 'error');
+            }
+        }
+
+        async function addSpecialTrain() {
+            const trainId = document.getElementById('specialTrainId').value;
+            const depTime = parseInt(document.getElementById('specialDepTime').value);
+            
+            if (!trainId) {
+                showNotification('Please enter train ID', 'error');
+                return;
+            }
+            
+            try {
+                const response = await fetch(`${BACKEND_URL}/special_train`, {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        train_id: trainId,
+                        dep_time: depTime,
+                        arr_time: depTime + 180,
+                        speed_kmh: 65,
+                        stops: ['SBC', 'MYA', 'MYS']
+                    })
+                });
+                
+                const result = await response.json();
+                if (result.success) {
+                    showNotification(`Special train ${trainId} added!`, 'success');
+                    document.getElementById('specialTrainId').value = '';
+                    await loadTrainList(); // Refresh train list
+                } else {
+                    showNotification(result.message, 'error');
+                }
+            } catch (error) {
+                console.error('Error adding special train:', error);
+                showNotification('Error adding special train', 'error');
+            }
+        }
+
+        function focusOnTrains() {
+            if (Object.keys(trainMarkers).length > 0) {
+                const group = new L.featureGroup(Object.values(trainMarkers));
+                map.fitBounds(group.getBounds().pad(0.1));
+                showNotification('Focused on active trains', 'info');
+            } else {
+                showNotification('No active trains to focus on', 'info');
+            }
+        }
+
+        function refreshData() {
+            updatePositions();
+            showNotification('Data refreshed', 'info');
+        }
+
+        function showNotification(message, type) {
+            const notification = document.getElementById('notification');
+            notification.textContent = message;
+            notification.className = `notification ${type} show`;
+            
+            setTimeout(() => {
+                notification.classList.remove('show');
+            }, 3000);
+        }
+
+        // Initialize when page loads
+        document.addEventListener('DOMContentLoaded', init);
+    </script>
+</body>
+</html>
