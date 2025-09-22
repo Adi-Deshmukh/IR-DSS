@@ -409,6 +409,33 @@
             }
         }
 
+        function animateMarkerToPosition(marker, startLatLng, endLatLng, duration) {
+            const startTime = Date.now();
+            
+            function updatePosition() {
+                const elapsed = Date.now() - startTime;
+                const progress = Math.min(elapsed / duration, 1);
+                
+                // Use easing function for smooth animation
+                const easedProgress = easeInOutQuad(progress);
+                
+                const lat = startLatLng.lat + (endLatLng.lat - startLatLng.lat) * easedProgress;
+                const lng = startLatLng.lng + (endLatLng.lng - startLatLng.lng) * easedProgress;
+                
+                marker.setLatLng([lat, lng]);
+                
+                if (progress < 1) {
+                    requestAnimationFrame(updatePosition);
+                }
+            }
+            
+            requestAnimationFrame(updatePosition);
+        }
+        
+        function easeInOutQuad(t) {
+            return t < 0.5 ? 2 * t * t : -1 + (4 - 2 * t) * t;
+        }
+
         // Initialize map
         map = L.map('map').setView([12.6, 77.2], 9);
         L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
@@ -606,7 +633,10 @@
                 document.getElementById('activeTrains').textContent = activeCount;
                 document.getElementById('completedTrains').textContent = completedCount;
                 
-                // Update train markers
+                // Fetch and display train events
+                fetchTrainEvents();
+                
+                // Update train markers with smooth animation
                 Object.entries(data.positions).forEach(([trainId, pos]) => {
                     const icon = TRAIN_ICONS[pos.status] || '🚂';
                     const trackClass = `track-${pos.assigned_track || 1}`;
@@ -614,9 +644,21 @@
                     const statusClass = pos.status === 'running' ? 'train-running' : '';
                     
                     if (trainMarkers[trainId]) {
-                        // Update existing marker
-                        trainMarkers[trainId].setLatLng([pos.lat, pos.lon]);
-                        trainMarkers[trainId].setIcon(L.divIcon({
+                        // Smooth transition to new position
+                        const marker = trainMarkers[trainId];
+                        const currentLatLng = marker.getLatLng();
+                        const newLatLng = L.latLng(pos.lat, pos.lon);
+                        
+                        // Only update if position actually changed
+                        if (Math.abs(currentLatLng.lat - newLatLng.lat) > 0.0001 || 
+                            Math.abs(currentLatLng.lng - newLatLng.lng) > 0.0001) {
+                            
+                            // Animate to new position
+                            animateMarkerToPosition(marker, currentLatLng, newLatLng, 800);
+                        }
+                        
+                        // Update icon and styling
+                        marker.setIcon(L.divIcon({
                             html: `<div class="train-marker ${statusClass} ${trackClass} ${typeClass}">${icon}</div>`,
                             iconSize: [24, 24],
                             iconAnchor: [12, 12],
@@ -638,6 +680,10 @@
                     }
                     
                     // Update popup
+                    const dwellingInfo = pos.status === 'dwelling' && pos.dwelling_time_remaining > 0 
+                        ? `<br><strong>Dwelling:</strong> ${pos.dwelling_time_remaining.toFixed(1)} min remaining`
+                        : '';
+                    
                     trainMarkers[trainId].bindPopup(`
                         <b>🚂 Train ${trainId}</b><br>
                         <strong>Type:</strong> ${pos.train_type}<br>
@@ -647,7 +693,7 @@
                         <strong>Progress:</strong> ${(pos.progress * 100).toFixed(1)}%<br>
                         <strong>Delay:</strong> ${pos.delay.toFixed(1)} min<br>
                         <strong>Current:</strong> ${pos.current_segment}<br>
-                        <strong>Next:</strong> ${pos.next_station}
+                        <strong>Next:</strong> ${pos.next_station}${dwellingInfo}
                     `);
                 });
                 
@@ -690,7 +736,7 @@
             try {
                 await fetch(`${BACKEND_URL}/start_sim`, {method: 'POST'});
                 document.getElementById('status').textContent = 'Running';
-                updateInterval = setInterval(updatePositions, 1000); // Update every 1000ms for smoother movement
+                updateInterval = setInterval(updatePositions, 1500); // Update every 1.5 seconds for smoother movement
                 showNotification('Simulation started!', 'success');
             } catch (error) {
                 console.error('Error starting simulation:', error);

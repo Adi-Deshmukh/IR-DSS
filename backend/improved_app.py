@@ -176,60 +176,222 @@ def create_interpolated_route(start_coords, end_coords, track_points):
     return route
 
 def create_train_route(stops):
-    """Create a route based on train stops using actual station coordinates and track data"""
+    """Create a route based on train stops using actual railway line coordinates"""
     if not stops or not actual_stations:
         return []
     
-    route = []
+    # Find the main railway line (longest track that connects most stations)
+    main_line = find_main_railway_line()
     
-    # Add coordinates for each stop in order
+    if not main_line:
+        return create_simple_station_route(stops)
+    
+    # Get station positions on the main line
+    route_points = []
+    
+    for stop_code in stops:
+        if stop_code in actual_stations:
+            station = actual_stations[stop_code]
+            station_coord = [station['lon'], station['lat']]
+            
+            # Find the closest point on the main line to this station
+            closest_point = find_closest_point_on_line(station_coord, main_line)
+            route_points.append(closest_point)
+    
+    if len(route_points) < 2:
+        return route_points
+    
+    # Create a continuous route along the main line between stations
+    detailed_route = []
+    
+    for i in range(len(route_points) - 1):
+        start_point = route_points[i]
+        end_point = route_points[i + 1]
+        
+        # Extract the portion of main line between these points
+        segment = extract_line_segment(main_line, start_point, end_point)
+        
+        if i == 0:
+            detailed_route.extend(segment)
+        else:
+            # Skip the first point to avoid duplication
+            detailed_route.extend(segment[1:])
+    
+    return detailed_route
+
+def find_main_railway_line():
+    """Build the main railway line by connecting track segments"""
+    if not actual_tracks:
+        return []
+    
+    # Get all main railway tracks
+    main_tracks = []
+    for track_id, track in actual_tracks.items():
+        if (track.get('track_type') == 'rail' and 
+            track.get('service', 'main') in ['main', None] and
+            len(track.get('coordinates', [])) > 1):
+            main_tracks.append(track['coordinates'])
+    
+    if not main_tracks:
+        return []
+    
+    # If we have stations, try to build a route connecting them
+    if actual_stations and len(actual_stations) >= 2:
+        return build_connected_railway_line(main_tracks)
+    
+    # Otherwise, return the longest single track
+    longest_track = max(main_tracks, key=len, default=[])
+    return longest_track
+
+def build_connected_railway_line(track_segments):
+    """Connect track segments to build a continuous railway line"""
+    if not track_segments:
+        return []
+    
+    # Start with the track segment closest to SBC
+    if 'SBC' in actual_stations:
+        sbc_coord = [actual_stations['SBC']['lon'], actual_stations['SBC']['lat']]
+        
+        # Find the track segment closest to SBC
+        closest_segment = None
+        min_distance = float('inf')
+        
+        for segment in track_segments:
+            for coord in segment:
+                dist = math.sqrt((coord[0] - sbc_coord[0])**2 + (coord[1] - sbc_coord[1])**2)
+                if dist < min_distance:
+                    min_distance = dist
+                    closest_segment = segment
+        
+        if closest_segment:
+            # Start building the route from this segment
+            connected_line = list(closest_segment)
+            used_segments = {id(closest_segment)}
+            
+            # Try to connect more segments
+            current_end = connected_line[-1]
+            
+            while len(used_segments) < len(track_segments):
+                best_segment = None
+                best_distance = float('inf')
+                best_reverse = False
+                
+                for segment in track_segments:
+                    if id(segment) in used_segments:
+                        continue
+                    
+                    # Check distance to start of segment
+                    start_dist = math.sqrt(
+                        (segment[0][0] - current_end[0])**2 + 
+                        (segment[0][1] - current_end[1])**2
+                    )
+                    
+                    # Check distance to end of segment (might need to reverse)
+                    end_dist = math.sqrt(
+                        (segment[-1][0] - current_end[0])**2 + 
+                        (segment[-1][1] - current_end[1])**2
+                    )
+                    
+                    if start_dist < best_distance:
+                        best_distance = start_dist
+                        best_segment = segment
+                        best_reverse = False
+                    
+                    if end_dist < best_distance:
+                        best_distance = end_dist
+                        best_segment = segment
+                        best_reverse = True
+                
+                # If we can't connect more segments (gap too large), break
+                if best_distance > 0.01:  # ~1km gap
+                    break
+                
+                if best_segment:
+                    segment_to_add = list(reversed(best_segment)) if best_reverse else list(best_segment)
+                    # Skip first point to avoid duplication
+                    connected_line.extend(segment_to_add[1:])
+                    current_end = connected_line[-1]
+                    used_segments.add(id(best_segment))
+            
+            return connected_line
+    
+    # Fallback: return the longest segment
+    return max(track_segments, key=len, default=[])
+
+def find_closest_point_on_line(point, line_coords):
+    """Find the closest point on a line to a given point"""
+    if not line_coords:
+        return point
+    
+    min_distance = float('inf')
+    closest_point = line_coords[0]
+    
+    for coord in line_coords:
+        distance = math.sqrt((point[0] - coord[0])**2 + (point[1] - coord[1])**2)
+        if distance < min_distance:
+            min_distance = distance
+            closest_point = coord
+    
+    return closest_point
+
+def extract_line_segment(line_coords, start_point, end_point):
+    """Extract a segment of the line between two points"""
+    if not line_coords or len(line_coords) < 2:
+        return [start_point, end_point]
+    
+    # Find indices of closest points to start and end
+    start_idx = 0
+    end_idx = len(line_coords) - 1
+    
+    min_start_dist = float('inf')
+    min_end_dist = float('inf')
+    
+    for i, coord in enumerate(line_coords):
+        start_dist = math.sqrt((start_point[0] - coord[0])**2 + (start_point[1] - coord[1])**2)
+        end_dist = math.sqrt((end_point[0] - coord[0])**2 + (end_point[1] - coord[1])**2)
+        
+        if start_dist < min_start_dist:
+            min_start_dist = start_dist
+            start_idx = i
+        
+        if end_dist < min_end_dist:
+            min_end_dist = end_dist
+            end_idx = i
+    
+    # Ensure correct order
+    if start_idx > end_idx:
+        start_idx, end_idx = end_idx, start_idx
+    
+    # Extract the segment
+    segment = line_coords[start_idx:end_idx + 1]
+    
+    # Ensure we have enough points for smooth movement
+    if len(segment) < 5:
+        # Interpolate more points
+        interpolated = [segment[0]]
+        for i in range(len(segment) - 1):
+            start = segment[i]
+            end = segment[i + 1]
+            
+            # Add interpolated points
+            for j in range(1, 4):
+                t = j / 4.0
+                interpolated.append([
+                    start[0] + (end[0] - start[0]) * t,
+                    start[1] + (end[1] - start[1]) * t
+                ])
+            interpolated.append(end)
+        return interpolated
+    
+    return segment
+
+def create_simple_station_route(stops):
+    """Fallback method to create route using station coordinates"""
+    route = []
     for stop_code in stops:
         if stop_code in actual_stations:
             station = actual_stations[stop_code]
             route.append([station['lon'], station['lat']])
-        else:
-            logger.warning(f"Station {stop_code} not found in actual stations")
-    
-    # If we have track data, create a detailed route following tracks
-    if len(route) >= 2 and actual_tracks:
-        enhanced_route = []
-        
-        for i in range(len(route) - 1):
-            start_coord = route[i]
-            end_coord = route[i + 1]
-            
-            # Add start coordinate
-            enhanced_route.append(start_coord)
-            
-            # Find track segments that connect these stations
-            connecting_points = find_connecting_track_points(start_coord, end_coord)
-            
-            # Add connecting track points
-            if connecting_points:
-                # Filter out points too close to start/end to avoid clustering
-                filtered_points = []
-                for point in connecting_points:
-                    dist_to_start = math.sqrt((point[0] - start_coord[0])**2 + (point[1] - start_coord[1])**2)
-                    dist_to_end = math.sqrt((point[0] - end_coord[0])**2 + (point[1] - end_coord[1])**2)
-                    
-                    # Only add points that are not too close to stations
-                    if dist_to_start > 0.005 and dist_to_end > 0.005:
-                        filtered_points.append(point)
-                
-                # Limit the number of points to prevent too much detail
-                if len(filtered_points) > 20:
-                    step = len(filtered_points) // 20
-                    filtered_points = filtered_points[::step]
-                
-                enhanced_route.extend(filtered_points)
-        
-        # Add final coordinate
-        enhanced_route.append(route[-1])
-        
-        # Smooth the route by removing points that create sharp turns
-        smoothed_route = smooth_route(enhanced_route)
-        return smoothed_route
-    
     return route
 
 def smooth_route(route_points):
@@ -457,9 +619,12 @@ def calculate_route_length(coordinates):
     return total_length
 
 def load_train_data():
-    """Load train data from CSV"""
+    """Load train data from CSV with proper track assignment"""
     global trains_data
     csv_file = os.path.join(os.path.dirname(__file__), '..', 'data', 'sbc_mys_schedules.csv')
+    
+    # First pass: load all train data without track assignment
+    temp_trains = {}
     
     try:
         with open(csv_file, 'r') as f:
@@ -473,15 +638,13 @@ def load_train_data():
                     else:
                         stops = [s.strip().strip("'") for s in stops_str.split(',')]
                     
-                    # Assign track based on train ID and direction
                     train_id = row['train_id']
-                    assigned_track = assign_track(train_id, stops, row['train_type'])
                     
-                    # Add some random delay for realism (0-5 minutes)
+                    # Add some random delay for realism
                     import random
-                    random_delay = random.uniform(0, 5) if row['train_type'] == 'passenger' else random.uniform(0, 10)
+                    random_delay = random.uniform(0, 3) if row['train_type'] == 'passenger' else random.uniform(0, 8)
                     
-                    trains_data[train_id] = {
+                    temp_trains[train_id] = {
                         'train_id': train_id,
                         'dep_time': int(row['dep_time']),
                         'arr_time': int(row['arr_time']),
@@ -489,237 +652,463 @@ def load_train_data():
                         'stops': stops,
                         'train_type': row['train_type'],
                         'priority': row['priority'],
-                        'delay': random_delay,  # Random initial delay
-                        'assigned_track': assigned_track,  # Track assignment
-                        'track_name': f"Track {assigned_track}"
+                        'delay': random_delay
                     }
                 except (ValueError, SyntaxError) as e:
                     logger.error(f"Error parsing train {row['train_id']}: {e}")
                     continue
-        logger.info(f"Loaded {len(trains_data)} trains")
+        
+        # Second pass: assign tracks based on scheduling
+        trains_data = assign_tracks_optimally(temp_trains)
+        
+        logger.info(f"Loaded {len(trains_data)} trains with optimal track assignment")
     except Exception as e:
         logger.error(f"Error loading train data: {e}")
 
-def assign_track(train_id, stops, train_type):
-    """Assign track based on train characteristics"""
-    # Convert train_id to int for calculation
-    train_num = int(train_id)
+def assign_tracks_optimally(temp_trains):
+    """Assign tracks to minimize conflicts"""
+    final_trains = {}
+    track_schedules = {1: [], 2: []}  # Track occupied time slots
     
-    # Different logic for different train types
-    if train_type == 'passenger':
-        # Passenger trains alternate between tracks based on ID
-        if train_num % 2 == 0:
-            return 1  # Even numbered trains on Track 1
+    # Sort trains by departure time for sequential assignment
+    sorted_trains = sorted(temp_trains.items(), key=lambda x: x[1]['dep_time'])
+    
+    for train_id, train_data in sorted_trains:
+        dep_time = train_data['dep_time'] + train_data['delay']
+        arr_time = train_data['arr_time'] + train_data['delay']
+        train_type = train_data['train_type']
+        
+        # Check track availability
+        track1_available = is_track_available(track_schedules[1], dep_time, arr_time)
+        track2_available = is_track_available(track_schedules[2], dep_time, arr_time)
+        
+        # Assign track based on availability and preference
+        if train_type == 'passenger':
+            # Passenger trains prefer Track 1
+            if track1_available:
+                assigned_track = 1
+            elif track2_available:
+                assigned_track = 2
+            else:
+                # Add delay to avoid conflict
+                assigned_track = 1
+                delay_needed = calculate_delay_needed(track_schedules[1], dep_time, arr_time)
+                train_data['delay'] += delay_needed
+                dep_time += delay_needed
+                arr_time += delay_needed
         else:
-            return 2  # Odd numbered trains on Track 2
-    elif train_type == 'freight':
-        # Freight trains mostly use Track 2 (goods line)
-        return 2
-    else:
-        # Default assignment based on departure time
-        # Early trains (even hours) on Track 1, odd hours on Track 2
-        dep_minute = train_num % 120  # Use train number as proxy for time
-        if dep_minute < 60:
-            return 1
-        else:
-            return 2
+            # Freight trains prefer Track 2
+            if track2_available:
+                assigned_track = 2
+            elif track1_available:
+                assigned_track = 1
+            else:
+                # Add delay to avoid conflict
+                assigned_track = 2
+                delay_needed = calculate_delay_needed(track_schedules[2], dep_time, arr_time)
+                train_data['delay'] += delay_needed
+                dep_time += delay_needed
+                arr_time += delay_needed
+        
+        # Update track schedule
+        track_schedules[assigned_track].append((dep_time, arr_time, train_id))
+        
+        # Finalize train data
+        train_data['assigned_track'] = assigned_track
+        train_data['track_name'] = f"Track {assigned_track}"
+        final_trains[train_id] = train_data
+    
+    return final_trains
+
+def is_track_available(track_schedule, dep_time, arr_time):
+    """Check if track is available for the given time slot"""
+    buffer = 3  # 3-minute buffer between trains
+    
+    for scheduled_dep, scheduled_arr, _ in track_schedule:
+        # Check for overlap with buffer
+        if not (arr_time + buffer <= scheduled_dep or dep_time >= scheduled_arr + buffer):
+            return False
+    
+    return True
+
+def calculate_delay_needed(track_schedule, dep_time, arr_time):
+    """Calculate minimum delay needed to avoid conflicts"""
+    if not track_schedule:
+        return 0
+    
+    # Find the latest conflicting train
+    latest_end = 0
+    for scheduled_dep, scheduled_arr, _ in track_schedule:
+        if scheduled_arr > dep_time and scheduled_dep < arr_time:
+            latest_end = max(latest_end, scheduled_arr)
+    
+    if latest_end > 0:
+        return latest_end - dep_time + 3  # 3-minute buffer
+    
+    return 0
 
 def calculate_position(train_id, current_time):
-    """Calculate train position with better movement visualization"""
+    """Calculate train position ensuring it stays exactly on track coordinates"""
     if train_id not in trains_data:
         return None
     
     train = trains_data[train_id]
     
-    # Get track coordinates - create a comprehensive route
-    if not actual_tracks or not actual_stations:
-        return None
-    
-    # Create a route that connects all stations the train visits
+    # Get the actual railway track coordinates
     route_coords = create_train_route(train['stops'])
     
     if not route_coords or len(route_coords) < 2:
-        # Fallback to first available track
-        first_track = list(actual_tracks.values())[0]
-        route_coords = first_track['coordinates']
+        logger.warning(f"No valid route found for train {train_id}")
+        return None
     
-    # Adjust for delays
+    # Calculate timing based on realistic journey
     effective_dep_time = train['dep_time'] + train['delay']
     effective_arr_time = train['arr_time'] + train['delay']
     
+    # Check if train hasn't started yet
     if current_time < effective_dep_time:
-        # Not departed yet - show at starting station
         return {
             'train_id': train_id,
-            'lat': route_coords[0][1],
+            'lat': route_coords[0][1],  # Start at first track coordinate
             'lon': route_coords[0][0],
             'speed': 0,
             'status': 'waiting',
-            'current_segment': train['stops'][0] if train['stops'] else 'SBC',
-            'next_station': train['stops'][0] if train['stops'] else 'SBC',
+            'current_segment': train['stops'][0] if train['stops'] else 'Start',
+            'next_station': train['stops'][1] if len(train['stops']) > 1 else train['stops'][0],
             'delay': train['delay'],
             'track_type': train.get('track_name', 'Track 1'),
             'assigned_track': train.get('assigned_track', 1),
             'train_type': train['train_type'],
-            'progress': 0.0
+            'progress': 0.0,
+            'dwelling_time_remaining': 0
         }
     
+    # Check if journey is completed
     if current_time > effective_arr_time:
-        # Journey completed
         return {
             'train_id': train_id,
-            'lat': route_coords[-1][1],
+            'lat': route_coords[-1][1],  # End at last track coordinate
             'lon': route_coords[-1][0],
             'speed': 0,
             'status': 'completed',
-            'current_segment': train['stops'][-1] if train['stops'] else 'MYS',
-            'next_station': train['stops'][-1] if train['stops'] else 'MYS',
+            'current_segment': train['stops'][-1] if train['stops'] else 'End',
+            'next_station': train['stops'][-1] if train['stops'] else 'End',
             'delay': train['delay'],
             'track_type': train.get('track_name', 'Track 1'),
             'assigned_track': train.get('assigned_track', 1),
             'train_type': train['train_type'],
-            'progress': 1.0
+            'progress': 1.0,
+            'dwelling_time_remaining': 0
         }
     
-    # Calculate progress along route with station stops
+    # Calculate progress along the route
     journey_time = effective_arr_time - effective_dep_time
     elapsed_time = current_time - effective_dep_time
-    base_progress = min(1.0, elapsed_time / journey_time)
+    progress = min(1.0, elapsed_time / journey_time)
     
-    # Handle station stops - modify progress to account for waiting times
-    actual_progress = base_progress
-    status = 'running'
+    # Find exact position on track coordinates
+    track_position = calculate_track_position(route_coords, progress)
+    
+    # Calculate current speed
+    base_speed = train['speed_kmh']
+    current_speed = base_speed
+    
+    # Check if near any station (reduce speed)
+    station_nearby = False
     current_station = None
-    dwelling_time_remaining = 0
-    
-    # Check if we should be at a station
-    if len(train['stops']) > 1:
-        stops_timing = calculate_station_timing(train, journey_time)
-        
-        for i, (station_code, station_time, waiting_time) in enumerate(stops_timing):
-            station_start_time = station_time
-            station_end_time = station_time + waiting_time
-            
-            if station_start_time <= elapsed_time <= station_end_time:
-                # Train is at this station
-                status = 'dwelling'
+    for station_code in train['stops']:
+        if station_code in actual_stations:
+            station = actual_stations[station_code]
+            distance = math.sqrt(
+                (track_position[0] - station['lon'])**2 + 
+                (track_position[1] - station['lat'])**2
+            )
+            if distance < 0.005:  # Within ~500m of station
+                station_nearby = True
                 current_station = station_code
-                dwelling_time_remaining = station_end_time - elapsed_time
-                
-                # Set position to station coordinates
-                if station_code in actual_stations:
-                    lat = actual_stations[station_code]['lat']
-                    lon = actual_stations[station_code]['lon']
-                
-                # Generate arrival/departure events
-                if not hasattr(train, 'last_event_station') or train.get('last_event_station') != station_code:
-                    add_train_event(train_id, 'arriving', station_code, current_time)
-                    train['last_event_station'] = station_code
-                
+                current_speed = base_speed * 0.3  # Slow down near stations
                 break
-            elif elapsed_time > station_end_time and station_code == train.get('last_event_station'):
-                # Train just departed
-                add_train_event(train_id, 'departing', station_code, current_time)
-                train['last_event_station'] = None
     
-    # If not dwelling at station, interpolate position along route
-    if status == 'running':
-        # Interpolate position along route
-        if len(route_coords) < 2:
-            lat, lon = route_coords[0][1], route_coords[0][0]
-        else:
-            # Find which segment we're in
-            segment_progress = actual_progress * (len(route_coords) - 1)
-            segment_index = int(segment_progress)
-            local_progress = segment_progress - segment_index
-            
-            if segment_index >= len(route_coords) - 1:
-                lat, lon = route_coords[-1][1], route_coords[-1][0]
-            else:
-                # Linear interpolation
-                start_coord = route_coords[segment_index]
-                end_coord = route_coords[segment_index + 1]
-                
-                lat = start_coord[1] + (end_coord[1] - start_coord[1]) * local_progress
-                lon = start_coord[0] + (end_coord[0] - start_coord[0]) * local_progress
-
-def calculate_station_timing(train, total_journey_time):
-    """Calculate when train arrives at each station and how long it waits"""
-    if len(train['stops']) <= 1:
-        return []
+    status = 'dwelling' if station_nearby else 'running'
     
-    # Distribute journey time across segments between stations
-    total_segments = len(train['stops']) - 1
-    segment_time = total_journey_time / total_segments
-    
-    station_timing = []
-    current_time = 0
-    
+    # Determine next station
+    next_station = train['stops'][-1]
     for i, station_code in enumerate(train['stops']):
-        if i == 0:
-            # Starting station - no waiting time calculation needed
-            continue
-        elif i == len(train['stops']) - 1:
-            # Final station - arrives but doesn't depart
-            arrival_time = current_time + segment_time
-            waiting_time = get_station_waiting_time(station_code, train['train_type'], train['priority'])
-            station_timing.append((station_code, arrival_time, waiting_time))
-        else:
-            # Intermediate station
-            arrival_time = current_time + segment_time
-            waiting_time = get_station_waiting_time(station_code, train['train_type'], train['priority'])
-            station_timing.append((station_code, arrival_time, waiting_time))
-            current_time = arrival_time + waiting_time
-    
-    return station_timing
-
-    # Determine next station and current segment
-    next_station = 'MYS'
-    current_segment = 'SBC-MYS'
-    
-    if current_station:
-        next_station = current_station
-        current_segment = current_station
-    elif status == 'running':
-        progress_through_stops = actual_progress * (len(train['stops']) - 1)
-        stop_index = min(int(progress_through_stops) + 1, len(train['stops']) - 1)
-        next_station = train['stops'][stop_index]
-        
-        # Set current segment
-        if stop_index > 0:
-            current_segment = f"{train['stops'][stop_index-1]}-{train['stops'][stop_index]}"
-    
-    # Calculate realistic speed based on status and track conditions
-    current_speed = 0
-    if status == 'running':
-        # Vary speed based on track conditions and train type
-        base_speed = train['speed_kmh']
-        
-        # Reduce speed near stations
-        min_distance_to_station = min([
-            math.sqrt((lat - station['lat'])**2 + (lon - station['lon'])**2)
-            for station in actual_stations.values()
-        ])
-        
-        if min_distance_to_station < 0.02:  # Within 2km of station
-            current_speed = base_speed * 0.6  # Reduce to 60% speed
-        else:
-            current_speed = base_speed
+        if station_code in actual_stations:
+            station = actual_stations[station_code]
+            distance = math.sqrt(
+                (track_position[0] - station['lon'])**2 + 
+                (track_position[1] - station['lat'])**2
+            )
+            if distance > 0.01:  # Not yet reached this station
+                next_station = station_code
+                break
     
     return {
         'train_id': train_id,
-        'lat': lat,
-        'lon': lon,
-        'speed': current_speed,
+        'lat': track_position[1],  # Use exact track coordinate
+        'lon': track_position[0],  # Use exact track coordinate
+        'speed': current_speed if status == 'running' else 0,
         'status': status,
-        'current_segment': current_segment,
+        'current_segment': current_station or f"{train['stops'][0]}-{train['stops'][-1]}",
         'next_station': next_station,
         'delay': train['delay'],
         'track_type': train.get('track_name', 'Track 1'),
         'assigned_track': train.get('assigned_track', 1),
         'train_type': train['train_type'],
-        'progress': actual_progress,
-        'dwelling_time_remaining': dwelling_time_remaining if status == 'dwelling' else 0
+        'progress': progress,
+        'dwelling_time_remaining': 0
+    }
+
+def calculate_track_position(route_coords, progress):
+    """Calculate exact position on track coordinates based on progress"""
+    if not route_coords or len(route_coords) < 2:
+        return route_coords[0] if route_coords else [0, 0]
+    
+    # Calculate position along the route
+    total_points = len(route_coords)
+    position_index = progress * (total_points - 1)
+    
+    # Get the two points to interpolate between
+    lower_index = int(position_index)
+    upper_index = min(lower_index + 1, total_points - 1)
+    
+    if lower_index == upper_index:
+        return route_coords[lower_index]
+    
+    # Interpolate between the two track points
+    local_progress = position_index - lower_index
+    start_point = route_coords[lower_index]
+    end_point = route_coords[upper_index]
+    
+    interpolated_lon = start_point[0] + (end_point[0] - start_point[0]) * local_progress
+    interpolated_lat = start_point[1] + (end_point[1] - start_point[1]) * local_progress
+    
+    return [interpolated_lon, interpolated_lat]
+    
+    # Check if journey is completed
+    if current_time > journey_plan[-1]['end_time']:
+        return create_completed_position(train_id, train, route_coords[-1])
+    
+    # Default fallback
+    return create_waiting_position(train_id, train, route_coords[0])
+
+def create_realistic_journey_plan(train):
+    """Create a realistic journey plan with proper timing for stations"""
+    plan = []
+    
+    if len(train['stops']) < 2:
+        return plan
+    
+    base_dep_time = train['dep_time'] + train['delay']
+    current_time = base_dep_time
+    
+    # Calculate segment distances and times
+    total_distance = 160  # SBC to MYS is approximately 160km
+    
+    for i in range(len(train['stops']) - 1):
+        current_station = train['stops'][i]
+        next_station = train['stops'][i + 1]
+        
+        # Calculate distance for this segment (simplified)
+        segment_distance = total_distance / (len(train['stops']) - 1)
+        
+        # Calculate travel time based on speed
+        travel_time = (segment_distance / train['speed_kmh']) * 60  # Convert to minutes
+        
+        # Add station waiting time (except for first station)
+        if i > 0:
+            waiting_time = get_station_waiting_time(current_station, train['train_type'], train['priority'])
+            
+            # Station stop segment
+            plan.append({
+                'type': 'station_stop',
+                'station': current_station,
+                'start_time': current_time,
+                'end_time': current_time + waiting_time,
+                'status': 'dwelling'
+            })
+            current_time += waiting_time
+        
+        # Travel segment
+        plan.append({
+            'type': 'travel',
+            'from_station': current_station,
+            'to_station': next_station,
+            'start_time': current_time,
+            'end_time': current_time + travel_time,
+            'status': 'running'
+        })
+        current_time += travel_time
+    
+    # Final station stop
+    final_station = train['stops'][-1]
+    final_waiting = get_station_waiting_time(final_station, train['train_type'], train['priority'])
+    plan.append({
+        'type': 'station_stop',
+        'station': final_station,
+        'start_time': current_time,
+        'end_time': current_time + final_waiting,
+        'status': 'dwelling'
+    })
+    
+    return plan
+
+def calculate_position_in_segment(train_id, current_time, segment, route_coords):
+    """Calculate exact position within a journey segment"""
+    train = trains_data[train_id]
+    
+    if segment['type'] == 'station_stop':
+        # Train is at station
+        station_code = segment['station']
+        
+        # Generate events
+        time_at_station = current_time - segment['start_time']
+        if time_at_station < 0.5:  # Just arrived
+            add_train_event(train_id, 'arriving', station_code, current_time)
+        elif current_time > segment['end_time'] - 0.5:  # About to depart
+            add_train_event(train_id, 'departing', station_code, current_time)
+        
+        if station_code in actual_stations:
+            station = actual_stations[station_code]
+            return {
+                'train_id': train_id,
+                'lat': station['lat'],
+                'lon': station['lon'],
+                'speed': 0,
+                'status': 'dwelling',
+                'current_segment': station_code,
+                'next_station': station_code,
+                'delay': train['delay'],
+                'track_type': train.get('track_name', 'Track 1'),
+                'assigned_track': train.get('assigned_track', 1),
+                'train_type': train['train_type'],
+                'progress': 0.0,
+                'dwelling_time_remaining': segment['end_time'] - current_time
+            }
+    
+    elif segment['type'] == 'travel':
+        # Train is moving between stations
+        segment_duration = segment['end_time'] - segment['start_time']
+        elapsed_in_segment = current_time - segment['start_time']
+        progress_in_segment = elapsed_in_segment / segment_duration
+        
+        # Find station coordinates for interpolation
+        from_station = segment['from_station']
+        to_station = segment['to_station']
+        
+        if from_station in actual_stations and to_station in actual_stations:
+            from_coord = [actual_stations[from_station]['lon'], actual_stations[from_station]['lat']]
+            to_coord = [actual_stations[to_station]['lon'], actual_stations[to_station]['lat']]
+            
+            # Find route segment between these stations
+            route_section = find_route_between_stations(route_coords, from_coord, to_coord)
+            
+            if route_section and len(route_section) > 1:
+                # Interpolate along the route section
+                route_progress = progress_in_segment * (len(route_section) - 1)
+                route_index = int(route_progress)
+                local_progress = route_progress - route_index
+                
+                if route_index >= len(route_section) - 1:
+                    lat, lon = route_section[-1][1], route_section[-1][0]
+                else:
+                    start_coord = route_section[route_index]
+                    end_coord = route_section[route_index + 1]
+                    lat = start_coord[1] + (end_coord[1] - start_coord[1]) * local_progress
+                    lon = start_coord[0] + (end_coord[0] - start_coord[0]) * local_progress
+            else:
+                # Direct interpolation between stations
+                lat = from_coord[1] + (to_coord[1] - from_coord[1]) * progress_in_segment
+                lon = from_coord[0] + (to_coord[0] - from_coord[0]) * progress_in_segment
+        else:
+            # Fallback to route coordinates
+            lat, lon = route_coords[0][1], route_coords[0][0]
+        
+        return {
+            'train_id': train_id,
+            'lat': lat,
+            'lon': lon,
+            'speed': train['speed_kmh'],
+            'status': 'running',
+            'current_segment': f"{from_station}-{to_station}",
+            'next_station': to_station,
+            'delay': train['delay'],
+            'track_type': train.get('track_name', 'Track 1'),
+            'assigned_track': train.get('assigned_track', 1),
+            'train_type': train['train_type'],
+            'progress': progress_in_segment,
+            'dwelling_time_remaining': 0
+        }
+    
+    # Fallback
+    return create_waiting_position(train_id, train, route_coords[0])
+
+def find_route_between_stations(route_coords, from_coord, to_coord):
+    """Find the portion of route between two stations"""
+    if not route_coords or len(route_coords) < 2:
+        return [from_coord, to_coord]
+    
+    # Find closest points in route to stations
+    from_index = 0
+    to_index = len(route_coords) - 1
+    
+    min_from_dist = float('inf')
+    min_to_dist = float('inf')
+    
+    for i, coord in enumerate(route_coords):
+        from_dist = math.sqrt((coord[0] - from_coord[0])**2 + (coord[1] - from_coord[1])**2)
+        to_dist = math.sqrt((coord[0] - to_coord[0])**2 + (coord[1] - to_coord[1])**2)
+        
+        if from_dist < min_from_dist:
+            min_from_dist = from_dist
+            from_index = i
+        
+        if to_dist < min_to_dist:
+            min_to_dist = to_dist
+            to_index = i
+    
+    # Ensure proper order
+    if from_index > to_index:
+        from_index, to_index = to_index, from_index
+    
+    # Return route section
+    return route_coords[from_index:to_index + 1]
+
+def create_waiting_position(train_id, train, coord):
+    """Create position data for waiting train"""
+    return {
+        'train_id': train_id,
+        'lat': coord[1],
+        'lon': coord[0],
+        'speed': 0,
+        'status': 'waiting',
+        'current_segment': train['stops'][0] if train['stops'] else 'SBC',
+        'next_station': train['stops'][0] if train['stops'] else 'SBC',
+        'delay': train['delay'],
+        'track_type': train.get('track_name', 'Track 1'),
+        'assigned_track': train.get('assigned_track', 1),
+        'train_type': train['train_type'],
+        'progress': 0.0,
+        'dwelling_time_remaining': 0
+    }
+
+def create_completed_position(train_id, train, coord):
+    """Create position data for completed train"""
+    return {
+        'train_id': train_id,
+        'lat': coord[1],
+        'lon': coord[0],
+        'speed': 0,
+        'status': 'completed',
+        'current_segment': train['stops'][-1] if train['stops'] else 'MYS',
+        'next_station': train['stops'][-1] if train['stops'] else 'MYS',
+        'delay': train['delay'],
+        'track_type': train.get('track_name', 'Track 1'),
+        'assigned_track': train.get('assigned_track', 1),
+        'train_type': train['train_type'],
+        'progress': 1.0,
+        'dwelling_time_remaining': 0
     }
 
 def simulation_loop():
