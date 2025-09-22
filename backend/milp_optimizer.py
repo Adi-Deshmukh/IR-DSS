@@ -1011,7 +1011,7 @@ class RailwayMILPOptimizer:
             self._build_optimization_model(current_time, disruption_info or {}, current_positions or {})
             
             if not hasattr(self, 'model') or not self.variables:
-                return {
+                return { 
                     'success': False,
                     'message': 'No active trains to optimize',
                     'timestamp': current_time
@@ -1114,6 +1114,140 @@ class RailwayMILPOptimizer:
             'platform_assignments': self.platform_assignments,
             'recent_decisions': self.get_pending_decisions()
         }
+
+    def optimize_station_platform_assignment(self, train_id: str, station: str, 
+                                           current_time: float, current_positions: Dict = None) -> Dict:
+        """
+        Optimize platform assignment for a train arriving at a station.
+        Considers current train positions and platform availability.
+        
+        Args:
+            train_id: ID of the arriving train
+            station: Station where train is arriving
+            current_time: Current simulation time
+            current_positions: Current positions of all trains
+            
+        Returns:
+            Dict with optimization result and platform assignment decision
+        """
+        try:
+            start_time = time.time()
+            
+            if station not in self.stations:
+                return {
+                    'success': False,
+                    'message': f'Station {station} not found',
+                    'timestamp': current_time
+                }
+            
+            # Get available platforms at station
+            max_platforms = self.stations[station].get('platforms', 2)
+            available_platforms = list(range(1, max_platforms + 1))
+            
+            # Check which platforms are currently occupied
+            occupied_platforms = set()
+            if current_positions:
+                for other_train_id, pos in current_positions.items():
+                    if other_train_id != train_id and pos.get('station') == station:
+                        # Check if other train is at this station
+                        if pos.get('at_station', False):
+                            assigned_platform = self.platform_assignments.get(f"{other_train_id}_{station}")
+                            if assigned_platform:
+                                occupied_platforms.add(assigned_platform)
+            
+            # Find available platforms
+            free_platforms = [p for p in available_platforms if p not in occupied_platforms]
+            
+            if not free_platforms:
+                return {
+                    'success': False,
+                    'message': f'No platforms available at {station}',
+                    'timestamp': current_time
+                }
+            
+            # If only one platform available, assign it directly
+            if len(free_platforms) == 1:
+                platform = free_platforms[0]
+                decision = self.create_platform_assignment_decision(
+                    train_id, station, 0, platform, current_time
+                )
+                return {
+                    'success': True,
+                    'message': f'Assigned platform {platform} at {station}',
+                    'assigned_platform': platform,
+                    'decisions_created': [decision.to_dict()],
+                    'timestamp': current_time,
+                    'computation_time': time.time() - start_time
+                }
+            
+            # Multiple platforms available - use optimization to choose best one
+            # Consider factors like:
+            # - Platform efficiency (some platforms may be better for certain train types)
+            # - Future conflicts (avoid platforms that will be needed soon)
+            # - Train priority and type
+            
+            train = self.trains_data.get(train_id, {})
+            train_type = train.get('train_type', 'passenger')
+            priority = train.get('priority', 'medium')
+            
+            # Simple scoring system for platform selection
+            platform_scores = {}
+            
+            for platform in free_platforms:
+                score = 0
+                
+                # Prefer platforms that match train type efficiency
+                if train_type == 'passenger' and platform <= 2:  # Main platforms for passengers
+                    score += 2
+                elif train_type == 'freight' and platform > 2:  # Side platforms for freight
+                    score += 2
+                
+                # Prefer platforms for high priority trains
+                if priority == 'high':
+                    score += 1
+                
+                # Check for upcoming conflicts (simplified)
+                # In a real system, this would consider scheduled arrivals
+                conflict_penalty = 0
+                if current_positions:
+                    for other_train_id, pos in current_positions.items():
+                        if other_train_id != train_id:
+                            # Estimate arrival time at station
+                            distance_to_station = pos.get('distance_to_station', float('inf'))
+                            if distance_to_station < 10:  # Within 10km
+                                speed = self.trains_data.get(other_train_id, {}).get('speed_kmh', 60)
+                                eta_minutes = (distance_to_station / speed) * 60
+                                if eta_minutes < 30:  # Arriving within 30 minutes
+                                    conflict_penalty += 1
+                
+                score -= conflict_penalty
+                platform_scores[platform] = score
+            
+            # Select platform with highest score
+            best_platform = max(platform_scores, key=platform_scores.get)
+            
+            # Create decision for the assignment
+            decision = self.create_platform_assignment_decision(
+                train_id, station, 0, best_platform, current_time
+            )
+            
+            return {
+                'success': True,
+                'message': f'Optimized platform {best_platform} assignment at {station}',
+                'assigned_platform': best_platform,
+                'platform_scores': platform_scores,
+                'decisions_created': [decision.to_dict()],
+                'timestamp': current_time,
+                'computation_time': time.time() - start_time
+            }
+            
+        except Exception as e:
+            logger.error(f"Station platform optimization error: {e}")
+            return {
+                'success': False,
+                'message': f'Optimization error: {str(e)}',
+                'timestamp': current_time
+            }
 
     def create_departure_optimization_decision(self, train_id: str, station: str,
                                              current_departure: float, proposed_departure: float,
