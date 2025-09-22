@@ -280,6 +280,9 @@ class LiveRailwayController:
                 for arrival in station_arrivals:
                     self._handle_station_arrival(arrival, current_time)
                 
+                # Check for approved platform assignments and assign platforms
+                self._process_approved_platform_assignments(current_time)
+                
                 # Check for trains ready to depart
                 departures_ready = self._check_departure_readiness(current_time)
                 
@@ -329,56 +332,123 @@ class LiveRailwayController:
         return arrivals
     
     def _handle_station_arrival(self, arrival: Dict, current_time: float):
-        """Handle a train arriving at a station - assign platform track"""
+        """Handle a train arriving at a station - request MILP-optimized platform assignment"""
         train_id = arrival['train_id']
         station = arrival['station']
         
-        if station not in self.station_tracks:
-            return
-            
-        station_data = self.station_tracks[station]
+        logger.info(f"Live Control: Train {train_id} arriving at {station}, requesting platform assignment")
         
-        # Find available platform
-        available_platform = self._find_available_platform(station, current_time)
-        
-        if available_platform:
-            # Assign platform
-            self._assign_platform(train_id, station, available_platform, current_time)
-            
-            # Calculate optimized departure time
-            optimized_departure = self._calculate_optimal_departure(
-                train_id, station, available_platform, current_time
+        # Call MILP optimizer for platform assignment
+        try:
+            result = self.optimizer.optimize_station_platform_assignment(
+                train_id, station, current_time, self._position_cache
             )
             
-            # Update train's departure time
-            self._update_train_departure(train_id, station, optimized_departure)
+            if result['success']:
+                assigned_platform = result['assigned_platform']
+                decisions_created = result.get('decisions_created', [])
+                
+                if decisions_created:
+                    # Process the platform assignment decision through approval workflow
+                    self.process_optimization_decisions(decisions_created, current_time)
+                    
+                    # Mark train as waiting for platform approval
+                    if not hasattr(self, 'trains_waiting_approval'):
+                        self.trains_waiting_approval = {}
+                    
+                    self.trains_waiting_approval[train_id] = {
+                        'station': station,
+                        'requested_platform': assigned_platform,
+                        'request_time': current_time,
+                        'decision_ids': [d['decision_id'] for d in decisions_created]
+                    }
+                    
+                    logger.info(f"Live Control: Train {train_id} requested platform {assigned_platform} "
+                               f"at {station}, waiting for approval")
+                else:
+                    # No decision created - assign directly (fallback)
+                    self._assign_platform_directly(train_id, station, assigned_platform, current_time)
+            else:
+                # Optimization failed - try simple assignment
+                logger.warning(f"MILP platform optimization failed: {result['message']}")
+                available_platform = self._find_available_platform(station, current_time)
+                
+                if available_platform:
+                    self._assign_platform_directly(train_id, station, available_platform, current_time)
+                else:
+                    # No platform available - add to departure queue
+                    self._queue_train_at_station(train_id, station, current_time, arrival)
+                    
+        except Exception as e:
+            logger.error(f"Error in station arrival handling: {e}")
+            # Fallback to simple assignment
+            available_platform = self._find_available_platform(station, current_time)
+            if available_platform:
+                self._assign_platform_directly(train_id, station, available_platform, current_time)
+            else:
+                self._queue_train_at_station(train_id, station, current_time, arrival)
+    
+    def _assign_platform_directly(self, train_id: str, station: str, platform_id: int, current_time: float):
+        """Assign a platform directly without approval workflow (fallback)"""
+        self._assign_platform(train_id, station, platform_id, current_time)
+        
+        # Calculate and set departure time
+        optimized_departure = self._calculate_optimal_departure(
+            train_id, station, platform_id, current_time
+        )
+        self._update_train_departure(train_id, station, optimized_departure)
+        
+        logger.info(f"Live Control: Train {train_id} directly assigned platform {platform_id} "
+                   f"at {station}, departure: {optimized_departure:.1f}")
+    
+    def _queue_train_at_station(self, train_id: str, station: str, current_time: float, arrival: Dict):
+        """Queue a train when no platforms are available"""
+        if station not in self.departure_queue:
+            self.departure_queue[station] = []
+        
+        self.departure_queue[station].append({
+            'train_id': train_id,
+            'arrival_time': current_time,
+            'priority': arrival['train_data'].get('priority', 'medium')
+        })
+        
+        logger.info(f"Live Control: Train {train_id} queued at {station} - no platforms available")
+    
+    def _process_approved_platform_assignments(self, current_time: float):
+        """Process approved platform assignment decisions for waiting trains"""
+        if not hasattr(self, 'trains_waiting_approval'):
+            return
             
-            # Log the decision
-            decision = {
-                'timestamp': current_time,
-                'type': 'platform_assignment',
-                'train_id': train_id,
-                'station': station,
-                'platform': available_platform,
-                'departure_time': optimized_departure,
-                'reason': 'Station arrival - optimal platform assignment'
-            }
+        trains_to_remove = []
+        
+        for train_id, wait_info in self.trains_waiting_approval.items():
+            station = wait_info['station']
+            requested_platform = wait_info['requested_platform']
+            decision_ids = wait_info['decision_ids']
             
-            self.optimization_decisions.append(decision)
-            logger.info(f"Live Control: Train {train_id} assigned platform {available_platform} "
-                       f"at {station}, optimized departure: {optimized_departure:.1f}")
-        else:
-            # No platform available - add to departure queue
-            if station not in self.departure_queue:
-                self.departure_queue[station] = []
+            # Check if any of the decisions have been approved
+            approved = False
+            for decision_id in decision_ids:
+                # Check pending decisions
+                for decision in self.pending_decisions:
+                    if decision.decision_id == decision_id and decision.status == DecisionStatus.APPROVED:
+                        approved = True
+                        break
+                if approved:
+                    break
             
-            self.departure_queue[station].append({
-                'train_id': train_id,
-                'arrival_time': current_time,
-                'priority': arrival['train_data'].get('priority', 'medium')
-            })
-            
-            logger.info(f"Live Control: Train {train_id} queued at {station} - no platforms available")
+            if approved:
+                # Assign the platform and set departure time
+                self._assign_platform_directly(train_id, station, requested_platform, current_time)
+                
+                # Remove from waiting list
+                trains_to_remove.append(train_id)
+                
+                logger.info(f"Live Control: Approved platform {requested_platform} assigned to train {train_id} at {station}")
+        
+        # Remove processed trains
+        for train_id in trains_to_remove:
+            del self.trains_waiting_approval[train_id]
     
     def _find_available_platform(self, station: str, current_time: float) -> int:
         """Find an available platform at a station"""
@@ -598,7 +668,7 @@ class LiveRailwayController:
                     current_positions[train_id] = pos
             
             # Run MILP optimization
-            result = self.optimizer.optimize_schedule(
+            result = self.optimizer.run_live_optimization(
                 current_time, 
                 None,  # No specific disruption
                 current_positions

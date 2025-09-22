@@ -313,6 +313,66 @@
             background: #c0392b;
         }
         
+        /* Decision Popup Styles */
+        .decision-popup {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            z-index: 4000;
+            background: white;
+            border-radius: 8px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+            border-left: 4px solid #3498db;
+            min-width: 300px;
+            max-width: 400px;
+        }
+        
+        .decision-popup-content {
+            padding: 15px;
+        }
+        
+        .decision-popup-content h4 {
+            margin: 0 0 10px 0;
+            color: #2c3e50;
+            font-size: 16px;
+        }
+        
+        .decision-popup-content p {
+            margin: 5px 0;
+            font-size: 14px;
+            color: #34495e;
+        }
+        
+        .decision-popup-actions {
+            margin-top: 15px;
+            display: flex;
+            gap: 8px;
+        }
+        
+        .decision-popup-actions button {
+            padding: 6px 12px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 12px;
+            font-weight: bold;
+        }
+        
+        .decision-popup-actions .btn-approve {
+            background: #27ae60;
+            color: white;
+        }
+        
+        .decision-popup-actions .btn-reject {
+            background: #e74c3c;
+            color: white;
+        }
+        
+        .decision-popup-actions button:last-child {
+            background: #95a5a6;
+            color: white;
+        }
+        
         /* Modal Styles */
         .modal {
             position: fixed;
@@ -500,6 +560,20 @@
             </div>
         </div>
 
+        <!-- Testing & Demo -->
+        <div class="control-section">
+            <h3>🧪 Testing & Demo</h3>
+            <button id="testDecisionsBtn" class="btn btn-primary">🎯 Generate Test Decisions</button>
+            <button id="testAddTrainBtn" class="btn btn-success">🚂 Add Test Train</button>
+            <button id="testDisruptionBtn" class="btn btn-warning">🚨 Test Disruption</button>
+            
+            <div style="margin-top: 10px; padding: 8px; background: #f8f9fa; border-radius: 4px; font-size: 11px;">
+                <div>• <strong>Generate Test Decisions:</strong> Creates sample optimization decisions</div>
+                <div>• <strong>Add Test Train:</strong> Adds a train and triggers auto-optimization</div>
+                <div>• <strong>Test Disruption:</strong> Simulates delay and generates recovery decisions</div>
+            </div>
+        </div>
+
         <!-- Optimization Results Panel -->
         <div class="control-section" id="optimizationResults" style="display: none;">
             <h3>Latest Optimization Results</h3>
@@ -576,8 +650,9 @@
             </div>
             
             <div style="margin-top: 10px;">
-                <button id="refreshDecisionsBtn" class="btn btn-primary" style="font-size: 12px; padding: 5px 10px;">🔄 Refresh</button>
+                <button id="refreshDecisionsBtn" class="btn btn-primary" style="font-size: 12px; padding: 5px 10px;" onclick="fetchPendingDecisions()">🔄 Refresh</button>
                 <button id="viewHistoryBtn" class="btn btn-secondary" style="font-size: 12px; padding: 5px 10px; margin-left: 5px;">📊 History</button>
+                <button id="testDecisionsBtn" class="btn btn-warning" style="font-size: 12px; padding: 5px 10px; margin-left: 5px;" onclick="testDecisionSystem()">🧪 Test</button>
             </div>
         </div>
     </div>
@@ -647,7 +722,7 @@
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     <script>
         const BACKEND_URL = 'http://localhost:5000';
-        let map, trainMarkers = {}, updateInterval, trackLayers = [], stationMarkers = [];
+        let map, trainMarkers = {}, updateInterval, decisionInterval, trackLayers = [], stationMarkers = [];
         let displayedEvents = new Set(); // Track displayed events to avoid duplicates
 
         // Notification system
@@ -900,6 +975,11 @@
             document.getElementById('focusTrainsBtn').addEventListener('click', focusOnTrains);
             document.getElementById('refreshBtn').addEventListener('click', refreshData);
             
+            // Testing & Demo buttons
+            document.getElementById('testDecisionsBtn').addEventListener('click', generateTestDecisions);
+            document.getElementById('testAddTrainBtn').addEventListener('click', addTestTrain);
+            document.getElementById('testDisruptionBtn').addEventListener('click', testDisruption);
+            
             // Optimization results
             document.getElementById('clearResultsBtn').addEventListener('click', function() {
                 document.getElementById('optimizationResults').style.display = 'none';
@@ -1046,6 +1126,11 @@
                 await fetch(`${BACKEND_URL}/start_sim`, {method: 'POST'});
                 document.getElementById('status').textContent = 'Running';
                 updateInterval = setInterval(updatePositions, 1500); // Update every 1.5 seconds for smoother movement
+                decisionInterval = setInterval(fetchPendingDecisions, 3000); // Check for decisions every 3 seconds
+                
+                // Immediately fetch decisions on start
+                setTimeout(fetchPendingDecisions, 1000); // Fetch after 1 second
+                
                 showNotification('Simulation started!', 'success');
             } catch (error) {
                 console.error('Error starting simulation:', error);
@@ -1058,6 +1143,7 @@
                 await fetch(`${BACKEND_URL}/stop_sim`, {method: 'POST'});
                 document.getElementById('status').textContent = 'Stopped';
                 if (updateInterval) clearInterval(updateInterval);
+                if (decisionInterval) clearInterval(decisionInterval);
                 showNotification('Simulation stopped', 'info');
             } catch (error) {
                 console.error('Error stopping simulation:', error);
@@ -1422,34 +1508,62 @@
         let currentDecisionId = null;
 
         async function fetchPendingDecisions() {
+            console.log('🔄 Fetching pending decisions...');
             try {
-                const response = await fetch('/api/pending_decisions');
-                const data = await response.json();
+                const response = await fetch(`${BACKEND_URL}/pending_decisions`);
+                console.log('📡 Response received:', response.status, response.statusText);
                 
-                if (data.status === 'success') {
-                    updateDecisionPanel(data.decisions);
-                    updateDecisionStats(data.stats);
+                const data = await response.json();
+                console.log('📦 Pending decisions response:', data);
+                
+                if (data.success === true) {
+                    console.log(`✅ Found ${data.decisions.length} decisions`);
+                    updateDecisionPanel(data.decisions || []);
+                    updateDecisionStats(data.stats || {});
                 } else {
-                    console.error('Failed to fetch decisions:', data.message);
+                    console.error('❌ Failed to fetch decisions:', data.message);
+                    showNotification(`Failed to fetch decisions: ${data.message}`, 'error');
                 }
             } catch (error) {
-                console.error('Error fetching decisions:', error);
+                console.error('💥 Error fetching decisions:', error);
                 showNotification('Failed to fetch decisions', 'error');
             }
         }
 
         function updateDecisionPanel(decisions) {
+            console.log(`🎯 Updating decision panel with ${decisions.length} decisions`);
+            
             const container = document.getElementById('decisionsContainer');
             const pendingCount = document.getElementById('pendingCount');
             
-            pendingCount.textContent = decisions.length;
-            
-            if (decisions.length === 0) {
-                container.innerHTML = '<div style="font-size: 11px; color: #666;">No pending decisions</div>';
+            if (!container) {
+                console.error('❌ decisionsContainer element not found!');
                 return;
             }
             
-            container.innerHTML = decisions.map(decision => `
+            if (!pendingCount) {
+                console.error('❌ pendingCount element not found!');
+                return;
+            }
+            
+            // Check for new decisions and show popup
+            const previousCount = parseInt(pendingCount.textContent) || 0;
+            if (decisions.length > previousCount && decisions.length > 0) {
+                // Show popup for new decision
+                const newDecision = decisions[decisions.length - 1]; // Show the latest one
+                showDecisionPopup(newDecision);
+            }
+            
+            pendingCount.textContent = decisions.length;
+            console.log(`📊 Updated pending count to: ${decisions.length}`);
+            
+            if (decisions.length === 0) {
+                container.innerHTML = '<div style="font-size: 11px; color: #666;">No pending decisions</div>';
+                console.log('📝 Set "No pending decisions" message');
+                return;
+            }
+            
+            const decisionsHTML = decisions.map(decision => `
                 <div class="decision-item ${decision.impact.toLowerCase()}-impact" onclick="showDecisionDetails('${decision.id}')">
                     <div class="decision-header">
                         <span class="decision-type">${decision.type}</span>
@@ -1463,19 +1577,60 @@
                     </div>
                 </div>
             `).join('');
+            
+            container.innerHTML = decisionsHTML;
+            console.log(`✅ Successfully rendered ${decisions.length} decision items`);
+            console.log('🎨 Decision HTML:', decisionsHTML.substring(0, 200) + '...');
+        }
+
+        function showDecisionPopup(decision) {
+            // Create a popup notification for new decision
+            const popup = document.createElement('div');
+            popup.className = 'decision-popup';
+            popup.innerHTML = `
+                <div class="decision-popup-content">
+                    <h4>🚂 New Decision Required</h4>
+                    <p><strong>${decision.type}</strong> for Train ${decision.train_id}</p>
+                    <p>${decision.description}</p>
+                    <div class="decision-popup-actions">
+                        <button class="btn-approve" onclick="approveDecision('${decision.id}'); this.closest('.decision-popup').remove();">Approve</button>
+                        <button class="btn-reject" onclick="rejectDecision('${decision.id}'); this.closest('.decision-popup').remove();">Reject</button>
+                        <button onclick="this.closest('.decision-popup').remove();">Later</button>
+                    </div>
+                </div>
+            `;
+            document.body.appendChild(popup);
+            
+            // Auto-remove after 10 seconds
+            setTimeout(() => {
+                if (popup.parentNode) {
+                    popup.remove();
+                }
+            }, 10000);
         }
 
         function updateDecisionStats(stats) {
-            document.getElementById('autoApprovedCount').textContent = stats.auto_approved || 0;
-            document.getElementById('totalSavings').textContent = `${stats.total_savings || 0} min`;
+            // Safely handle undefined or null stats object
+            const safeStats = stats || {};
+            
+            const autoApprovedElement = document.getElementById('autoApprovedCount');
+            const totalSavingsElement = document.getElementById('totalSavings');
+            
+            if (autoApprovedElement) {
+                autoApprovedElement.textContent = safeStats.auto_approved || 0;
+            }
+            
+            if (totalSavingsElement) {
+                totalSavingsElement.textContent = `${safeStats.total_savings || 0} min`;
+            }
         }
 
         async function showDecisionDetails(decisionId) {
             try {
-                const response = await fetch(`/api/pending_decisions`);
+                const response = await fetch(`${BACKEND_URL}/pending_decisions`);
                 const data = await response.json();
                 
-                if (data.status === 'success') {
+                if (data.success === true) {
                     const decision = data.decisions.find(d => d.id === decisionId);
                     if (decision) {
                         currentDecisionId = decisionId;
@@ -1543,7 +1698,10 @@
 
         async function approveDecision(decisionId) {
             try {
-                const response = await fetch('/api/approve_decision', {
+                console.log(`🎯 Approving decision: ${decisionId}`);
+                showNotification('Processing decision approval...', 'info');
+                
+                const response = await fetch(`${BACKEND_URL}/approve_decision`, {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',
@@ -1552,9 +1710,23 @@
                 });
                 
                 const result = await response.json();
+                console.log('📋 Approval result:', result);
                 
-                if (result.status === 'success') {
-                    showNotification('Decision approved successfully', 'success');
+                if (result.success === true) {
+                    const trainId = result.train_id || 'Unknown';
+                    showNotification(`✅ Decision approved! Applied to train ${trainId}`, 'success');
+                    
+                    // Show visual feedback
+                    const decisionElement = document.querySelector(`[onclick*="${decisionId}"]`);
+                    if (decisionElement) {
+                        decisionElement.style.border = '2px solid #27ae60';
+                        decisionElement.style.backgroundColor = '#d5eee1';
+                        setTimeout(() => {
+                            decisionElement.style.opacity = '0.7';
+                            decisionElement.innerHTML += '<div style="position: absolute; top: 5px; right: 5px; background: #27ae60; color: white; padding: 2px 6px; border-radius: 10px; font-size: 10px;">✓ APPLIED</div>';
+                        }, 500);
+                    }
+                    
                     fetchPendingDecisions(); // Refresh the list
                     closeDecisionModal();
                 } else {
@@ -1568,7 +1740,7 @@
 
         async function rejectDecision(decisionId) {
             try {
-                const response = await fetch('/api/reject_decision', {
+                const response = await fetch(`${BACKEND_URL}/reject_decision`, {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',
@@ -1578,7 +1750,7 @@
                 
                 const result = await response.json();
                 
-                if (result.status === 'success') {
+                if (result.success === true) {
                     showNotification('Decision rejected', 'info');
                     fetchPendingDecisions(); // Refresh the list
                     closeDecisionModal();
@@ -1697,6 +1869,110 @@
                 controlHeader.parentNode.insertBefore(decisionApprovalBtn, controlHeader.nextSibling);
             }
         });
+
+        // Test & Demo Functions
+        async function generateTestDecisions() {
+            console.log('🧪 Generating test decisions...');
+            showNotification('Generating test decisions...', 'info');
+            
+            try {
+                // Just refresh the pending decisions to trigger the backend test generation
+                await fetchPendingDecisions();
+                showNotification('✨ Test decisions generated! Check the decision panel.', 'success');
+            } catch (error) {
+                console.error('Error generating test decisions:', error);
+                showNotification('❌ Failed to generate test decisions', 'error');
+            }
+        }
+
+        async function addTestTrain() {
+            console.log('🚂 Adding test train...');
+            showNotification('Adding test train...', 'info');
+            
+            try {
+                const testTrainId = `TEST${Date.now()}`;
+                const response = await fetch(`${BACKEND_URL}/special_train`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        train_id: testTrainId,
+                        dep_time: 45,
+                        arr_time: 180,
+                        speed_kmh: 70,
+                        stops: ['SBC', 'MYA', 'MYS'],
+                        train_type: 'express',
+                        priority: 'high'
+                    })
+                });
+                
+                const result = await response.json();
+                
+                if (result.success) {
+                    console.log('✅ Test train added:', result);
+                    showNotification(`🚂 Test train ${testTrainId} added! Generated ${result.new_decisions_generated || 0} new decisions.`, 'success');
+                    
+                    // Refresh decisions to show new ones
+                    setTimeout(() => fetchPendingDecisions(), 1000);
+                } else {
+                    throw new Error(result.message || 'Failed to add train');
+                }
+            } catch (error) {
+                console.error('Error adding test train:', error);
+                showNotification('❌ Failed to add test train', 'error');
+            }
+        }
+
+        async function testDisruption() {
+            console.log('🚨 Creating test disruption...');
+            showNotification('Creating test disruption...', 'info');
+            
+            try {
+                // Get a random train from the system
+                const trainsResponse = await fetch(`${BACKEND_URL}/positions`);
+                const trainsData = await trainsResponse.json();
+                
+                if (!trainsData.trains || trainsData.trains.length === 0) {
+                    throw new Error('No trains available for disruption test');
+                }
+                
+                const randomTrain = trainsData.trains[Math.floor(Math.random() * trainsData.trains.length)];
+                const disruptionDelay = Math.floor(Math.random() * 15) + 5; // 5-20 minutes
+                
+                const response = await fetch(`${BACKEND_URL}/disrupt`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        train_id: randomTrain.train_id,
+                        delay_minutes: disruptionDelay,
+                        station: 'KSR Bengaluru'
+                    })
+                });
+                
+                const result = await response.json();
+                
+                if (result.success) {
+                    console.log('✅ Test disruption created:', result);
+                    showNotification(`🚨 Added ${disruptionDelay}min delay to ${randomTrain.train_id}. Generated ${result.new_decisions_generated || 0} recovery decisions.`, 'warning');
+                    
+                    // Refresh decisions to show new ones
+                    setTimeout(() => fetchPendingDecisions(), 1000);
+                } else {
+                    throw new Error(result.message || 'Failed to create disruption');
+                }
+            } catch (error) {
+                console.error('Error creating test disruption:', error);
+                showNotification('❌ Failed to create test disruption', 'error');
+            }
+        }
+
+        // Test function for debugging decision system
+        function testDecisionSystem() {
+            console.log('🧪 Testing decision system...');
+            console.log('🔍 BACKEND_URL:', BACKEND_URL);
+            console.log('🔍 Decision container exists:', !!document.getElementById('decisionsContainer'));
+            console.log('🔍 Pending count exists:', !!document.getElementById('pendingCount'));
+            fetchPendingDecisions();
+        }
 
         // Initialize when page loads
         document.addEventListener('DOMContentLoaded', init);
