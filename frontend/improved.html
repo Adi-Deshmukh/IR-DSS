@@ -209,6 +209,186 @@
         @media (max-width: 768px) {
             .control-panel { right: 5px; top: 5px; min-width: 280px; }
         }
+        
+        /* Decision Approval Styles */
+        .decision-item {
+            background: #f8f9fa;
+            border: 1px solid #e9ecef;
+            border-radius: 6px;
+            padding: 10px;
+            margin-bottom: 8px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+        
+        .decision-item:hover {
+            background: #e9ecef;
+            border-color: #dee2e6;
+        }
+        
+        .decision-item.high-impact {
+            border-left: 4px solid #e74c3c;
+        }
+        
+        .decision-item.medium-impact {
+            border-left: 4px solid #f39c12;
+        }
+        
+        .decision-item.low-impact {
+            border-left: 4px solid #27ae60;
+        }
+        
+        .decision-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 5px;
+        }
+        
+        .decision-type {
+            font-weight: bold;
+            font-size: 12px;
+        }
+        
+        .decision-impact {
+            font-size: 10px;
+            padding: 2px 6px;
+            border-radius: 12px;
+            color: white;
+        }
+        
+        .decision-impact.high {
+            background: #e74c3c;
+        }
+        
+        .decision-impact.medium {
+            background: #f39c12;
+        }
+        
+        .decision-impact.low {
+            background: #27ae60;
+        }
+        
+        .decision-description {
+            font-size: 11px;
+            color: #666;
+            margin-bottom: 5px;
+        }
+        
+        .decision-savings {
+            font-size: 10px;
+            color: #27ae60;
+            font-weight: bold;
+        }
+        
+        .decision-actions {
+            display: flex;
+            gap: 5px;
+            margin-top: 8px;
+        }
+        
+        .decision-actions .btn {
+            font-size: 10px;
+            padding: 4px 8px;
+            border: none;
+            border-radius: 3px;
+            cursor: pointer;
+        }
+        
+        .btn-approve {
+            background: #27ae60;
+            color: white;
+        }
+        
+        .btn-approve:hover {
+            background: #229954;
+        }
+        
+        .btn-reject {
+            background: #e74c3c;
+            color: white;
+        }
+        
+        .btn-reject:hover {
+            background: #c0392b;
+        }
+        
+        /* Modal Styles */
+        .modal {
+            position: fixed;
+            z-index: 3000;
+            left: 0;
+            top: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0,0,0,0.5);
+        }
+        
+        .modal-content {
+            background-color: #fefefe;
+            margin: 5% auto;
+            padding: 0;
+            border-radius: 8px;
+            width: 80%;
+            max-width: 600px;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.3);
+        }
+        
+        .modal-header {
+            background: #3498db;
+            color: white;
+            padding: 15px 20px;
+            border-radius: 8px 8px 0 0;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        
+        .modal-header h4 {
+            margin: 0;
+            font-size: 16px;
+        }
+        
+        .close {
+            color: white;
+            font-size: 24px;
+            font-weight: bold;
+            cursor: pointer;
+            line-height: 1;
+        }
+        
+        .close:hover {
+            opacity: 0.7;
+        }
+        
+        .modal-body {
+            padding: 20px;
+            max-height: 400px;
+            overflow-y: auto;
+        }
+        
+        .modal-footer {
+            padding: 15px 20px;
+            border-top: 1px solid #eee;
+            display: flex;
+            justify-content: flex-end;
+            gap: 10px;
+        }
+        
+        .impact-metric {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 8px;
+            font-size: 12px;
+        }
+        
+        .metric-label {
+            color: #666;
+        }
+        
+        .metric-value {
+            font-weight: bold;
+        }
     </style>
 </head>
 <body>
@@ -304,8 +484,120 @@
         <!-- Quick Actions -->
         <div class="control-section">
             <h3>Quick Actions</h3>
+            <button id="optimizeBtn" class="btn btn-success">⚡ Optimize Schedule</button>
             <button id="focusTrainsBtn" class="btn btn-primary">🎯 Focus Trains</button>
             <button id="refreshBtn" class="btn btn-primary">🔄 Refresh</button>
+            
+            <div class="status-display" id="optimizationStatus" style="margin-top: 10px; display: none;">
+                <div class="status-item">
+                    <span class="status-label">MILP Status:</span>
+                    <span class="status-value" id="milpStatus">Checking...</span>
+                </div>
+                <div class="status-item">
+                    <span class="status-label">Last Optimization:</span>
+                    <span class="status-value" id="lastOptimization">Never</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Optimization Results Panel -->
+        <div class="control-section" id="optimizationResults" style="display: none;">
+            <h3>Latest Optimization Results</h3>
+            <div class="status-display">
+                <div class="status-item">
+                    <span class="status-label">Trains Analyzed:</span>
+                    <span class="status-value" id="trainsAnalyzed">0</span>
+                </div>
+                <div class="status-item">
+                    <span class="status-label">Schedules Updated:</span>
+                    <span class="status-value" id="schedulesUpdated">0</span>
+                </div>
+                <div class="status-item">
+                    <span class="status-label">Delay Reduction:</span>
+                    <span class="status-value" id="delayReduction">0 min</span>
+                </div>
+                <div class="status-item">
+                    <span class="status-label">Waiting Saved:</span>
+                    <span class="status-value" id="waitingSaved">0 min</span>
+                </div>
+                <div class="status-item">
+                    <span class="status-label">Reordered:</span>
+                    <span class="status-value" id="trainsReordered">0</span>
+                </div>
+            </div>
+            <button id="clearResultsBtn" class="btn btn-danger" style="margin-top: 10px; font-size: 12px; padding: 5px 10px;">Clear Results</button>
+        </div>
+
+        <!-- Live Control Panel -->
+        <div class="control-section" id="liveControlPanel" style="display: none;">
+            <h3>🔴 Live Railway Control</h3>
+            <div class="status-display">
+                <div class="status-item">
+                    <span class="status-label">Control System:</span>
+                    <span class="status-value" id="liveControlStatus">Inactive</span>
+                </div>
+                <div class="status-item">
+                    <span class="status-label">Live Decisions:</span>
+                    <span class="status-value" id="liveDecisions">0</span>
+                </div>
+                <div class="status-item">
+                    <span class="status-label">Platforms Occupied:</span>
+                    <span class="status-value" id="platformsOccupied">0</span>
+                </div>
+            </div>
+            <div id="recentDecisions" style="margin-top: 10px; font-size: 11px; max-height: 100px; overflow-y: auto;">
+                <strong>Recent Decisions:</strong>
+                <div id="decisionsList">No decisions yet</div>
+            </div>
+            <button id="refreshLiveBtn" class="btn btn-primary" style="margin-top: 10px; font-size: 12px; padding: 5px 10px;">🔄 Refresh</button>
+        </div>
+
+        <!-- Decision Approval Panel -->
+        <div class="control-section" id="decisionApprovalPanel" style="display: none;">
+            <h3>⚖️ Decision Approval</h3>
+            <div class="status-display">
+                <div class="status-item">
+                    <span class="status-label">Pending Decisions:</span>
+                    <span class="status-value" id="pendingCount">0</span>
+                </div>
+                <div class="status-item">
+                    <span class="status-label">Auto-Approved:</span>
+                    <span class="status-value" id="autoApprovedCount">0</span>
+                </div>
+                <div class="status-item">
+                    <span class="status-label">Total Savings:</span>
+                    <span class="status-value" id="totalSavings">0 min</span>
+                </div>
+            </div>
+            
+            <div id="pendingDecisionsList" style="margin-top: 10px; max-height: 200px; overflow-y: auto;">
+                <strong>Pending Decisions:</strong>
+                <div id="decisionsContainer">No pending decisions</div>
+            </div>
+            
+            <div style="margin-top: 10px;">
+                <button id="refreshDecisionsBtn" class="btn btn-primary" style="font-size: 12px; padding: 5px 10px;">🔄 Refresh</button>
+                <button id="viewHistoryBtn" class="btn btn-secondary" style="font-size: 12px; padding: 5px 10px; margin-left: 5px;">📊 History</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Decision Modal -->
+    <div id="decisionModal" class="modal" style="display: none;">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h4 id="modalTitle">Decision Details</h4>
+                <span class="close" onclick="closeDecisionModal()">&times;</span>
+            </div>
+            <div class="modal-body">
+                <div id="decisionDetails"></div>
+                <div id="impactAnalysis" style="margin-top: 15px;"></div>
+            </div>
+            <div class="modal-footer">
+                <button id="approveBtn" class="btn btn-success" onclick="approveCurrentDecision()">✅ Approve</button>
+                <button id="rejectBtn" class="btn btn-danger" onclick="rejectCurrentDecision()">❌ Reject</button>
+                <button class="btn btn-secondary" onclick="closeDecisionModal()">Cancel</button>
+            </div>
         </div>
     </div>
 
@@ -457,6 +749,10 @@
                 await loadStations();
                 await loadTrainList();
                 setupEventListeners();
+                
+                // Check optimization capabilities
+                await checkOptimizationStatus();
+                
                 showNotification('Railway DSS loaded with real data!', 'success');
             } catch (error) {
                 console.error('Error initializing Railway DSS:', error);
@@ -600,8 +896,18 @@
             document.getElementById('addSpecialBtn').addEventListener('click', addSpecialTrain);
             
             // Quick actions
+            document.getElementById('optimizeBtn').addEventListener('click', optimizeSchedule);
             document.getElementById('focusTrainsBtn').addEventListener('click', focusOnTrains);
             document.getElementById('refreshBtn').addEventListener('click', refreshData);
+            
+            // Optimization results
+            document.getElementById('clearResultsBtn').addEventListener('click', function() {
+                document.getElementById('optimizationResults').style.display = 'none';
+                showNotification('Optimization results cleared', 'info');
+            });
+            
+            // Live control
+            document.getElementById('refreshLiveBtn').addEventListener('click', updateLiveControlStatus);
         }
 
         async function setSimulationSpeed(speed) {
@@ -704,6 +1010,9 @@
                         delete trainMarkers[trainId];
                     }
                 });
+
+                // Update live control status during simulation
+                updateLiveControlStatus();
                 
             } catch (error) {
                 console.error('Error updating positions:', error);
@@ -841,6 +1150,249 @@
             }
         }
 
+        async function optimizeSchedule() {
+            const optimizeBtn = document.getElementById('optimizeBtn');
+            const originalText = optimizeBtn.textContent;
+            
+            try {
+                // Disable button and show loading state
+                optimizeBtn.disabled = true;
+                optimizeBtn.textContent = '⚡ Optimizing...';
+                optimizeBtn.classList.remove('btn-success');
+                optimizeBtn.classList.add('btn-warning');
+                
+                showNotification('Starting MILP optimization...', 'info');
+                
+                // First check if MILP is available
+                const statusResponse = await fetch(`${BACKEND_URL}/optimization_status`);
+                const status = await statusResponse.json();
+                
+                if (!status.milp_available) {
+                    showNotification('MILP optimizer not available. Please install PuLP.', 'error');
+                    return;
+                }
+                
+                // Show optimization status
+                document.getElementById('optimizationStatus').style.display = 'block';
+                document.getElementById('milpStatus').textContent = `Optimizing ${status.active_trains} trains...`;
+                
+                // Run optimization
+                const response = await fetch(`${BACKEND_URL}/optimize`, {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        // Include any disruption context if needed
+                        trigger: 'manual',
+                        timestamp: Date.now()
+                    })
+                });
+                
+                const result = await response.json();
+                
+                if (result.success) {
+                    const trainsAffected = result.trains_affected || 0;
+                    const changesApplied = result.changes_applied || 0;
+                    const optimizationDetails = result.optimization_details || {};
+                    
+                    // Main success message
+                    const message = `Optimization complete! ${trainsAffected} trains analyzed, ${changesApplied} schedules updated.`;
+                    showNotification(message, 'success');
+                    
+                    // Update status display
+                    document.getElementById('milpStatus').textContent = 'Available';
+                    document.getElementById('lastOptimization').textContent = new Date().toLocaleTimeString();
+                    
+                    // Show and update optimization results panel
+                    if (optimizationDetails.summary) {
+                        const summary = optimizationDetails.summary;
+                        document.getElementById('optimizationResults').style.display = 'block';
+                        document.getElementById('trainsAnalyzed').textContent = trainsAffected;
+                        document.getElementById('schedulesUpdated').textContent = changesApplied;
+                        document.getElementById('delayReduction').textContent = `${summary.total_delay_reduction.toFixed(1)} min`;
+                        document.getElementById('waitingSaved').textContent = `${summary.waiting_time_saved.toFixed(1)} min`;
+                        document.getElementById('trainsReordered').textContent = summary.trains_reordered;
+                    }
+                    
+                    // Display detailed optimization results
+                    if (optimizationDetails.summary) {
+                        const summary = optimizationDetails.summary;
+                        let detailMessage = '🚂 Optimization Results:\\n';
+                        
+                        if (summary.total_delay_reduction > 0) {
+                            detailMessage += `✅ Total delay reduced: ${summary.total_delay_reduction.toFixed(1)} minutes\\n`;
+                        }
+                        
+                        if (summary.waiting_time_saved > 0) {
+                            detailMessage += `⏱️ Waiting time saved: ${summary.waiting_time_saved.toFixed(1)} minutes\\n`;
+                        }
+                        
+                        if (summary.trains_reordered > 0) {
+                            detailMessage += `🔄 Trains reordered: ${summary.trains_reordered}\\n`;
+                        }
+                        
+                        if (summary.significant_improvements > 0) {
+                            detailMessage += `📈 Significant improvements: ${summary.significant_improvements} trains\\n`;
+                        }
+                        
+                        detailMessage += `📊 Average delay reduction: ${summary.average_delay_reduction.toFixed(1)} min/train`;
+                        
+                        // Show detailed summary after 1 second
+                        setTimeout(() => showNotification(detailMessage, 'info'), 1000);
+                    }
+                    
+                    // Show train-specific changes
+                    if (optimizationDetails.train_changes && optimizationDetails.train_changes.length > 0) {
+                        let trainDetails = '📋 Train-specific changes:\\n';
+                        
+                        optimizationDetails.train_changes.forEach((change, index) => {
+                            if (change.significant_change && index < 5) { // Show first 5 significant changes
+                                const priority = change.priority.toUpperCase();
+                                const type = change.train_type.charAt(0).toUpperCase() + change.train_type.slice(1);
+                                
+                                if (change.delay_reduction > 0) {
+                                    trainDetails += `🟢 ${change.train_id} (${priority} ${type}): -${change.delay_reduction.toFixed(1)}min delay\\n`;
+                                } else if (change.waiting_time_saved > 0) {
+                                    trainDetails += `🔵 ${change.train_id} (${priority} ${type}): -${change.waiting_time_saved.toFixed(1)}min waiting\\n`;
+                                }
+                            }
+                        });
+                        
+                        if (trainDetails.length > 30) {
+                            // Show train details after 3 seconds
+                            setTimeout(() => showNotification(trainDetails, 'info'), 3000);
+                        }
+                    }
+                    
+                    // Log complete optimization results for debugging
+                    console.log('Complete Optimization Results:', {
+                        summary: optimizationDetails.summary,
+                        trainChanges: optimizationDetails.train_changes,
+                        trainsAnalyzed: optimizationDetails.total_trains_analyzed
+                    });
+                    
+                } else {
+                    showNotification(`Optimization failed: ${result.message}`, 'error');
+                    document.getElementById('milpStatus').textContent = 'Error';
+                }
+                
+            } catch (error) {
+                console.error('Error during optimization:', error);
+                showNotification('Optimization failed: Network error', 'error');
+                document.getElementById('milpStatus').textContent = 'Error';
+            } finally {
+                // Restore button state
+                optimizeBtn.disabled = false;
+                optimizeBtn.textContent = originalText;
+                optimizeBtn.classList.remove('btn-warning');
+                optimizeBtn.classList.add('btn-success');
+            }
+        }
+
+        async function checkOptimizationStatus() {
+            try {
+                const response = await fetch(`${BACKEND_URL}/optimization_status`);
+                const status = await response.json();
+                
+                const statusDisplay = document.getElementById('optimizationStatus');
+                const milpStatus = document.getElementById('milpStatus');
+                const optimizeBtn = document.getElementById('optimizeBtn');
+                
+                if (status.milp_available) {
+                    milpStatus.textContent = 'Available';
+                    optimizeBtn.disabled = false;
+                    statusDisplay.style.display = 'block';
+                } else {
+                    milpStatus.textContent = 'Not Available';
+                    optimizeBtn.disabled = true;
+                    optimizeBtn.title = 'MILP optimizer not available. Please install PuLP.';
+                    statusDisplay.style.display = 'block';
+                }
+                
+                // Update live control status
+                if (status.live_control_available) {
+                    document.getElementById('liveControlPanel').style.display = 'block';
+                    
+                    if (status.live_control) {
+                        document.getElementById('liveControlStatus').textContent = 
+                            status.live_control.running ? '🟢 Active' : '🔴 Inactive';
+                        document.getElementById('liveDecisions').textContent = 
+                            status.live_control.total_decisions || 0;
+                        
+                        // Update platform occupancy
+                        let totalOccupied = 0;
+                        if (status.live_control.stations) {
+                            Object.values(status.live_control.stations).forEach(station => {
+                                totalOccupied += station.occupied_platforms || 0;
+                            });
+                        }
+                        document.getElementById('platformsOccupied').textContent = totalOccupied;
+                        
+                        // Update recent decisions
+                        updateRecentDecisions(status.live_control.recent_decisions || []);
+                    }
+                } else {
+                    document.getElementById('liveControlStatus').textContent = 'Not Available';
+                }
+                
+            } catch (error) {
+                console.error('Error checking optimization status:', error);
+                document.getElementById('milpStatus').textContent = 'Unknown';
+            }
+        }
+        
+        async function updateLiveControlStatus() {
+            try {
+                const response = await fetch(`${BACKEND_URL}/live_decisions?limit=5`);
+                const data = await response.json();
+                
+                if (data.success) {
+                    updateRecentDecisions(data.decisions);
+                    document.getElementById('liveDecisions').textContent = data.total_decisions || 0;
+                    showNotification('Live control status updated', 'info');
+                }
+            } catch (error) {
+                console.error('Error updating live control status:', error);
+                showNotification('Error updating live control status', 'error');
+            }
+        }
+        
+        function updateRecentDecisions(decisions) {
+            const decisionsList = document.getElementById('decisionsList');
+            
+            if (!decisions || decisions.length === 0) {
+                decisionsList.innerHTML = 'No recent decisions';
+                return;
+            }
+            
+            let html = '';
+            decisions.slice(-3).forEach(decision => {
+                const time = new Date(decision.timestamp * 60000).toLocaleTimeString();
+                let description = '';
+                
+                switch(decision.type) {
+                    case 'platform_assignment':
+                        description = `🚂 ${decision.train_id} → Platform ${decision.platform} at ${decision.station}`;
+                        break;
+                    case 'departure_optimization':
+                        const saved = decision.time_saved ? ` (saved ${decision.time_saved.toFixed(1)}min)` : '';
+                        description = `⏰ ${decision.train_id} departure optimized${saved}`;
+                        break;
+                    case 'full_optimization':
+                        description = `🔧 ${decision.train_id} schedule optimized`;
+                        break;
+                    default:
+                        description = `${decision.train_id}: ${decision.type}`;
+                }
+                
+                html += `<div style="margin: 3px 0; padding: 2px; background: #f0f0f0; border-radius: 3px;">
+                    <small>${time}</small><br>
+                    ${description}
+                </div>`;
+            });
+            
+            decisionsList.innerHTML = html;
+        }
+
         function focusOnTrains() {
             if (Object.keys(trainMarkers).length > 0) {
                 const group = new L.featureGroup(Object.values(trainMarkers));
@@ -865,6 +1417,286 @@
                 notification.classList.remove('show');
             }, 3000);
         }
+
+        // Decision Management Functions
+        let currentDecisionId = null;
+
+        async function fetchPendingDecisions() {
+            try {
+                const response = await fetch('/api/pending_decisions');
+                const data = await response.json();
+                
+                if (data.status === 'success') {
+                    updateDecisionPanel(data.decisions);
+                    updateDecisionStats(data.stats);
+                } else {
+                    console.error('Failed to fetch decisions:', data.message);
+                }
+            } catch (error) {
+                console.error('Error fetching decisions:', error);
+                showNotification('Failed to fetch decisions', 'error');
+            }
+        }
+
+        function updateDecisionPanel(decisions) {
+            const container = document.getElementById('decisionsContainer');
+            const pendingCount = document.getElementById('pendingCount');
+            
+            pendingCount.textContent = decisions.length;
+            
+            if (decisions.length === 0) {
+                container.innerHTML = '<div style="font-size: 11px; color: #666;">No pending decisions</div>';
+                return;
+            }
+            
+            container.innerHTML = decisions.map(decision => `
+                <div class="decision-item ${decision.impact.toLowerCase()}-impact" onclick="showDecisionDetails('${decision.id}')">
+                    <div class="decision-header">
+                        <span class="decision-type">${decision.type}</span>
+                        <span class="decision-impact ${decision.impact.toLowerCase()}">${decision.impact}</span>
+                    </div>
+                    <div class="decision-description">${decision.description}</div>
+                    <div class="decision-savings">Savings: ${decision.expected_savings} min</div>
+                    <div class="decision-actions" onclick="event.stopPropagation()">
+                        <button class="btn btn-approve" onclick="approveDecision('${decision.id}')">✅</button>
+                        <button class="btn btn-reject" onclick="rejectDecision('${decision.id}')">❌</button>
+                    </div>
+                </div>
+            `).join('');
+        }
+
+        function updateDecisionStats(stats) {
+            document.getElementById('autoApprovedCount').textContent = stats.auto_approved || 0;
+            document.getElementById('totalSavings').textContent = `${stats.total_savings || 0} min`;
+        }
+
+        async function showDecisionDetails(decisionId) {
+            try {
+                const response = await fetch(`/api/pending_decisions`);
+                const data = await response.json();
+                
+                if (data.status === 'success') {
+                    const decision = data.decisions.find(d => d.id === decisionId);
+                    if (decision) {
+                        currentDecisionId = decisionId;
+                        displayDecisionModal(decision);
+                    }
+                }
+            } catch (error) {
+                console.error('Error fetching decision details:', error);
+                showNotification('Failed to load decision details', 'error');
+            }
+        }
+
+        function displayDecisionModal(decision) {
+            const modal = document.getElementById('decisionModal');
+            const modalTitle = document.getElementById('modalTitle');
+            const decisionDetails = document.getElementById('decisionDetails');
+            const impactAnalysis = document.getElementById('impactAnalysis');
+            
+            modalTitle.textContent = `${decision.type} Decision`;
+            
+            decisionDetails.innerHTML = `
+                <div class="impact-metric">
+                    <span class="metric-label">Type:</span>
+                    <span class="metric-value">${decision.type}</span>
+                </div>
+                <div class="impact-metric">
+                    <span class="metric-label">Impact Level:</span>
+                    <span class="metric-value decision-impact ${decision.impact.toLowerCase()}">${decision.impact}</span>
+                </div>
+                <div class="impact-metric">
+                    <span class="metric-label">Expected Savings:</span>
+                    <span class="metric-value">${decision.expected_savings} minutes</span>
+                </div>
+                <div class="impact-metric">
+                    <span class="metric-label">Created:</span>
+                    <span class="metric-value">${new Date(decision.created_at).toLocaleString()}</span>
+                </div>
+                <div style="margin-top: 15px;">
+                    <strong>Description:</strong>
+                    <p style="margin: 5px 0; font-size: 12px; color: #666;">${decision.description}</p>
+                </div>
+            `;
+            
+            if (decision.impact_analysis) {
+                impactAnalysis.innerHTML = `
+                    <strong>Impact Analysis:</strong>
+                    <div style="margin-top: 5px; font-size: 11px;">
+                        ${Object.entries(decision.impact_analysis).map(([key, value]) => 
+                            `<div class="impact-metric">
+                                <span class="metric-label">${key.replace(/_/g, ' ').toUpperCase()}:</span>
+                                <span class="metric-value">${value}</span>
+                            </div>`
+                        ).join('')}
+                    </div>
+                `;
+            }
+            
+            modal.style.display = 'block';
+        }
+
+        function closeDecisionModal() {
+            document.getElementById('decisionModal').style.display = 'none';
+            currentDecisionId = null;
+        }
+
+        async function approveDecision(decisionId) {
+            try {
+                const response = await fetch('/api/approve_decision', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ decision_id: decisionId })
+                });
+                
+                const result = await response.json();
+                
+                if (result.status === 'success') {
+                    showNotification('Decision approved successfully', 'success');
+                    fetchPendingDecisions(); // Refresh the list
+                    closeDecisionModal();
+                } else {
+                    showNotification(result.message || 'Failed to approve decision', 'error');
+                }
+            } catch (error) {
+                console.error('Error approving decision:', error);
+                showNotification('Failed to approve decision', 'error');
+            }
+        }
+
+        async function rejectDecision(decisionId) {
+            try {
+                const response = await fetch('/api/reject_decision', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ decision_id: decisionId })
+                });
+                
+                const result = await response.json();
+                
+                if (result.status === 'success') {
+                    showNotification('Decision rejected', 'info');
+                    fetchPendingDecisions(); // Refresh the list
+                    closeDecisionModal();
+                } else {
+                    showNotification(result.message || 'Failed to reject decision', 'error');
+                }
+            } catch (error) {
+                console.error('Error rejecting decision:', error);
+                showNotification('Failed to reject decision', 'error');
+            }
+        }
+
+        function approveCurrentDecision() {
+            if (currentDecisionId) {
+                approveDecision(currentDecisionId);
+            }
+        }
+
+        function rejectCurrentDecision() {
+            if (currentDecisionId) {
+                rejectDecision(currentDecisionId);
+            }
+        }
+
+        async function viewDecisionHistory() {
+            try {
+                const response = await fetch('/api/decision_history');
+                const data = await response.json();
+                
+                if (data.status === 'success') {
+                    displayHistoryModal(data.decisions);
+                } else {
+                    showNotification('Failed to load decision history', 'error');
+                }
+            } catch (error) {
+                console.error('Error fetching decision history:', error);
+                showNotification('Failed to load decision history', 'error');
+            }
+        }
+
+        function displayHistoryModal(decisions) {
+            const modal = document.getElementById('decisionModal');
+            const modalTitle = document.getElementById('modalTitle');
+            const decisionDetails = document.getElementById('decisionDetails');
+            const impactAnalysis = document.getElementById('impactAnalysis');
+            
+            modalTitle.textContent = 'Decision History';
+            
+            decisionDetails.innerHTML = `
+                <div style="max-height: 300px; overflow-y: auto;">
+                    ${decisions.map(decision => `
+                        <div class="decision-item" style="margin-bottom: 10px;">
+                            <div class="decision-header">
+                                <span class="decision-type">${decision.type}</span>
+                                <span class="decision-impact ${decision.status.toLowerCase()}">${decision.status}</span>
+                            </div>
+                            <div class="decision-description">${decision.description}</div>
+                            <div style="font-size: 10px; color: #999; margin-top: 5px;">
+                                ${new Date(decision.created_at).toLocaleString()} | 
+                                Savings: ${decision.expected_savings} min
+                            </div>
+                        </div>
+                    `).join('')}
+                </div>
+            `;
+            
+            impactAnalysis.innerHTML = '';
+            
+            // Hide approve/reject buttons for history view
+            document.getElementById('approveBtn').style.display = 'none';
+            document.getElementById('rejectBtn').style.display = 'none';
+            
+            modal.style.display = 'block';
+        }
+
+        // Add event listeners for decision panel
+        document.addEventListener('DOMContentLoaded', function() {
+            // Existing initialization...
+            
+            // Add decision panel event listeners
+            const refreshDecisionsBtn = document.getElementById('refreshDecisionsBtn');
+            const viewHistoryBtn = document.getElementById('viewHistoryBtn');
+            
+            if (refreshDecisionsBtn) {
+                refreshDecisionsBtn.addEventListener('click', fetchPendingDecisions);
+            }
+            
+            if (viewHistoryBtn) {
+                viewHistoryBtn.addEventListener('click', viewDecisionHistory);
+            }
+            
+            // Close modal when clicking outside
+            window.addEventListener('click', function(event) {
+                const modal = document.getElementById('decisionModal');
+                if (event.target === modal) {
+                    closeDecisionModal();
+                }
+            });
+            
+            // Show decision approval button and fetch initial decisions
+            const decisionApprovalBtn = document.createElement('button');
+            decisionApprovalBtn.textContent = '⚖️ Decisions';
+            decisionApprovalBtn.className = 'btn btn-secondary';
+            decisionApprovalBtn.style.marginLeft = '5px';
+            decisionApprovalBtn.onclick = function() {
+                const panel = document.getElementById('decisionApprovalPanel');
+                panel.style.display = panel.style.display === 'none' ? 'block' : 'none';
+                if (panel.style.display === 'block') {
+                    fetchPendingDecisions();
+                }
+            };
+            
+            // Add button to control panel
+            const controlHeader = document.querySelector('.control-panel h3');
+            if (controlHeader) {
+                controlHeader.parentNode.insertBefore(decisionApprovalBtn, controlHeader.nextSibling);
+            }
+        });
 
         // Initialize when page loads
         document.addEventListener('DOMContentLoaded', init);

@@ -15,8 +15,27 @@ import ast
 from typing import Dict, List, Tuple
 import logging
 
+# Setup logging first
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+# Import MILP optimizer
+try:
+    from milp_optimizer import RailwayMILPOptimizer, DecisionType, DecisionStatus, OptimizationDecision
+    from enhanced_milp_optimizer import EnhancedRailwayMILPOptimizer
+    MILP_AVAILABLE = True
+except ImportError as e:
+    logger.warning(f"MILP optimizer not available: {e}")
+    MILP_AVAILABLE = False
+
+# Import Live Railway Controller
+try:
+    from live_controller import LiveRailwayController
+    live_controller = None
+    LIVE_CONTROL_AVAILABLE = True
+except ImportError as e:
+    logger.warning(f"Live controller not available: {e}")
+    LIVE_CONTROL_AVAILABLE = False
 
 app = Flask(__name__)
 CORS(app)
@@ -1112,8 +1131,8 @@ def create_completed_position(train_id, train, coord):
     }
 
 def simulation_loop():
-    """Enhanced simulation loop with configurable speed"""
-    global simulation_running, simulation_time, train_positions
+    """Enhanced simulation loop with live railway control system"""
+    global simulation_running, simulation_time, train_positions, live_controller
     
     while simulation_running:
         # Update train positions
@@ -1122,6 +1141,18 @@ def simulation_loop():
             pos = calculate_position(train_id, simulation_time)
             if pos:
                 train_positions[train_id] = pos
+        
+        # Update live controller if available
+        if live_controller and LIVE_CONTROL_AVAILABLE:
+            try:
+                # Update simulation time in live controller
+                live_controller.update_simulation_time(simulation_time)
+                
+                # Update train positions in live controller
+                live_controller.update_train_positions(train_positions)
+                
+            except Exception as e:
+                logger.error(f"Error updating live controller: {e}")
         
         # Advance time based on simulation speed
         simulation_time += simulation_speed
@@ -1146,24 +1177,42 @@ def index():
 
 @app.route('/start_sim', methods=['POST'])
 def start_simulation():
-    global simulation_running, simulation_time
+    global simulation_running, simulation_time, live_controller
     
     if not simulation_running:
         simulation_running = True
         if simulation_time == 0:  # Only reset time if starting fresh
             simulation_time = 0
         
+        # Initialize and start live controller
+        if LIVE_CONTROL_AVAILABLE and live_controller is None:
+            live_controller = LiveRailwayController(trains_data, actual_stations, actual_tracks)
+            live_controller.start_live_control()
+            logger.info("Live Railway Control System started")
+        elif live_controller:
+            live_controller.start_live_control()
+        
         thread = threading.Thread(target=simulation_loop, daemon=True)
         thread.start()
         
-        return jsonify({'success': True, 'message': 'Simulation started'})
+        return jsonify({
+            'success': True, 
+            'message': 'Simulation started with live control system',
+            'live_control': LIVE_CONTROL_AVAILABLE
+        })
     else:
         return jsonify({'success': True, 'message': 'Already running'})
 
 @app.route('/stop_sim', methods=['POST'])
 def stop_simulation():
-    global simulation_running
+    global simulation_running, live_controller
     simulation_running = False
+    
+    # Stop live controller
+    if live_controller:
+        live_controller.stop_live_control()
+        logger.info("Live Railway Control System stopped")
+    
     return jsonify({'success': True, 'message': 'Simulation stopped'})
 
 @app.route('/train_events')
@@ -1278,6 +1327,768 @@ def add_special_train():
         return jsonify({'success': True, 'message': f'Special train {train_id} added'})
     else:
         return jsonify({'success': False, 'message': 'Train ID already exists'})
+
+@app.route('/optimize', methods=['POST'])
+def optimize_schedule():
+    """
+    MILP-based schedule optimization endpoint using Törnquist & Persson model
+    Triggered by disruptions, delays, or manual optimization requests
+    """
+    global trains_data, simulation_time, train_positions
+    
+    if not MILP_AVAILABLE:
+        return jsonify({
+            'success': False, 
+            'message': 'MILP optimizer not available. Please install PuLP: pip install pulp'
+        })
+    
+    try:
+        data = request.get_json() or {}
+        
+        # Get optimization parameters
+        optimization_type = data.get('optimization_type', 'total_delay')  # 'total_delay' or 'weighted_cost'
+        strategy = data.get('strategy', 3)  # 1-4 (default: Strategy 3 from paper)
+        disrupted_trains = data.get('disrupted_trains', [])
+        enable_rerouting = data.get('enable_rerouting', False)  # Enhanced feature (disabled by default)
+        use_enhanced = data.get('use_enhanced', False)  # Use enhanced optimizer (disabled by default)
+        
+        # Get current simulation state
+        current_time = simulation_time
+        
+        # Initialize MILP optimizer with proper data
+        if use_enhanced and MILP_AVAILABLE:
+            try:
+                # Use enhanced optimizer with geopandas, rerouting, and through destinations
+                optimizer = EnhancedRailwayMILPOptimizer(trains_data, actual_stations, actual_tracks)
+                logger.info("Using Enhanced MILP Optimizer with advanced features")
+            except Exception as e:
+                logger.warning(f"Enhanced optimizer failed to initialize: {e}, falling back to standard optimizer")
+                optimizer = RailwayMILPOptimizer(trains_data, actual_stations, actual_tracks)
+        else:
+            optimizer = RailwayMILPOptimizer(trains_data, actual_stations, actual_tracks)
+        
+        # Apply any disruptions first
+        if 'delayed_train' in data and 'delay_minutes' in data:
+            train_id = data['delayed_train']
+            delay_minutes = data['delay_minutes']
+            station = data.get('station', None)
+            
+            disruption_result = optimizer.apply_disruption(train_id, delay_minutes, station)
+            logger.info(f"Applied disruption: {disruption_result['message']}")
+        
+        # Run MILP optimization
+        logger.info(f"Starting MILP optimization (type: {optimization_type}, strategy: {strategy}, rerouting: {enable_rerouting})")
+        
+        start_time = time.time()
+        
+        # Check if enhanced optimizer is being used
+        if isinstance(optimizer, EnhancedRailwayMILPOptimizer):
+            # Enhanced optimizer with rerouting support
+            optimization_result = optimizer.optimize_schedule(
+                disrupted_trains=disrupted_trains,
+                optimization_type=optimization_type,
+                strategy=strategy,
+                enable_rerouting=enable_rerouting
+            )
+        else:
+            # Standard optimizer
+            optimization_result = optimizer.optimize_schedule(
+                disrupted_trains=disrupted_trains,
+                optimization_type=optimization_type,
+                strategy=strategy
+            )
+        
+        # Generate optimization summary
+        summary = optimizer.get_optimization_summary(optimization_result)
+        
+        if optimization_result.status == "optimal":
+            # Process optimization decisions for admin approval
+            decisions_for_approval = []
+            auto_applied_decisions = []
+            
+            for decision in optimization_result.decisions:
+                # Check if decision can be auto-applied (low impact)
+                impact = abs(decision.impact_analysis.get('delay_change', 0))
+                if impact < 2.0 and decision.priority in ['low', 'medium']:  # Auto-apply minor changes
+                    # Apply decision automatically
+                    if apply_optimization_decision(decision):
+                        auto_applied_decisions.append(decision.to_dict())
+                        decision.status = DecisionStatus.APPLIED
+                        decision.approval_reason = "Auto-applied (low impact)"
+                else:
+                    # Requires admin approval
+                    decisions_for_approval.append(decision.to_dict())
+                    optimizer.pending_decisions.append(decision)
+            
+            # Update train schedules with approved changes
+            changes_applied = len(auto_applied_decisions)
+            
+            # Create response with detailed results
+            result = {
+                'success': True,
+                'status': optimization_result.status,
+                'optimization_type': optimization_type,
+                'strategy': strategy,
+                'computation_time': optimization_result.computation_time,
+                'objective_value': optimization_result.objective_value,
+                'summary': summary,
+                'decisions': {
+                    'auto_applied': auto_applied_decisions,
+                    'pending_approval': decisions_for_approval,
+                    'total_decisions': len(optimization_result.decisions)
+                },
+                'optimized_times': optimization_result.optimized_times,
+                'track_assignments': optimization_result.track_assignments,
+                'order_changes': optimization_result.order_changes,
+                'changes_applied': changes_applied,
+                'applied_at_sim_time': current_time,
+                'message': f"Optimization completed: {summary['delay_reduction']:.1f} min delay reduction, {len(decisions_for_approval)} decisions pending approval"
+            }
+            
+            # Add event for notifications
+            add_train_event(
+                'SYSTEM',
+                'optimization_completed', 
+                'Network',
+                current_time
+            )
+            
+            logger.info(f"MILP optimization completed: {summary['delay_reduction']:.1f} min delay reduction")
+            
+        else:
+            # Optimization failed
+            result = {
+                'success': False,
+                'status': optimization_result.status,
+                'message': f"Optimization failed: {optimization_result.status}",
+                'computation_time': optimization_result.computation_time,
+                'summary': summary,
+                'decisions': {'auto_applied': [], 'pending_approval': [], 'total_decisions': 0},
+                'recommendations': summary.get('recommendations', [])
+            }
+            
+            logger.warning(f"MILP optimization failed with status: {optimization_result.status}")
+        
+        return jsonify(result)
+        
+    except Exception as e:
+        logger.error(f"Error in optimization endpoint: {e}", exc_info=True)
+        return jsonify({
+            'success': False,
+            'message': f'Optimization failed: {str(e)}',
+            'error_type': type(e).__name__,
+            'recommendations': ['Check train data integrity', 'Verify station/track configuration', 'Try with relaxed constraints']
+        })
+
+def apply_optimization_decision(decision) -> bool:
+    """Apply an optimization decision to the trains_data"""
+    try:
+        train_id = decision.train_id
+        
+        if train_id not in trains_data:
+            logger.error(f"Train {train_id} not found for decision {decision.decision_id}")
+            return False
+        
+        if hasattr(decision, 'decision_type') and hasattr(DecisionType, 'DEPARTURE_OPTIMIZATION'):
+            if decision.decision_type == DecisionType.DEPARTURE_OPTIMIZATION:
+                # Apply departure time change
+                new_dep_time = decision.proposed_value.get('departure_time')
+                if new_dep_time is not None:
+                    trains_data[train_id]['dep_time'] = new_dep_time
+                    logger.info(f"Applied departure optimization for train {train_id}: new dep_time = {new_dep_time}")
+            
+            elif decision.decision_type == DecisionType.FULL_OPTIMIZATION:
+                # Apply full schedule optimization
+                new_delay = decision.proposed_value.get('delay', 0)
+                trains_data[train_id]['delay'] = new_delay
+                
+                # Update arrival time if provided
+                new_arr_time = decision.proposed_value.get('arrival_time')
+                if new_arr_time is not None:
+                    trains_data[train_id]['arr_time'] = new_arr_time
+                    
+                logger.info(f"Applied full optimization for train {train_id}: new delay = {new_delay}")
+        else:
+            # Fallback for dictionary-based decisions
+            if isinstance(decision, dict):
+                decision_type = decision.get('decision_type')
+                proposed_value = decision.get('proposed_value', {})
+                
+                if decision_type == 'departure_optimization':
+                    new_dep_time = proposed_value.get('departure_time')
+                    if new_dep_time is not None:
+                        trains_data[train_id]['dep_time'] = new_dep_time
+                        
+                elif decision_type == 'full_optimization':
+                    new_delay = proposed_value.get('delay', 0)
+                    trains_data[train_id]['delay'] = new_delay
+        
+        # Update last modified time
+        trains_data[train_id]['last_optimized'] = time.time()
+        
+        return True
+        
+    except Exception as e:
+        logger.error(f"Failed to apply decision: {e}")
+        return False
+
+@app.route('/optimization_status', methods=['GET'])
+def get_optimization_status():
+    """Get current optimization capabilities and status"""
+    global live_controller
+    
+    status = {
+        'milp_available': MILP_AVAILABLE,
+        'live_control_available': LIVE_CONTROL_AVAILABLE,
+        'current_sim_time': simulation_time,
+        'active_trains': len([t for t in trains_data.values() 
+                             if simulation_time < t['arr_time'] + t.get('delay', 0)]),
+        'total_trains': len(trains_data)
+    }
+    
+    # Add live control status if available
+    if live_controller and LIVE_CONTROL_AVAILABLE:
+        try:
+            station_status = live_controller.get_station_status()
+            recent_decisions = live_controller.get_live_decisions(5)
+            
+            status['live_control'] = {
+                'running': live_controller.running,
+                'stations': station_status,
+                'recent_decisions': recent_decisions,
+                'total_decisions': len(live_controller.optimization_decisions)
+            }
+        except Exception as e:
+            logger.error(f"Error getting live control status: {e}")
+            status['live_control'] = {'error': str(e)}
+    
+    return jsonify(status)
+
+@app.route('/live_decisions', methods=['GET'])
+def get_live_decisions():
+    """Get recent live optimization decisions"""
+    global live_controller
+    
+    if not live_controller or not LIVE_CONTROL_AVAILABLE:
+        return jsonify({'decisions': [], 'message': 'Live control not available'})
+    
+    try:
+        limit = request.args.get('limit', 20, type=int)
+        decisions = live_controller.get_live_decisions(limit)
+        
+        return jsonify({
+            'success': True,
+            'decisions': decisions,
+            'total_decisions': len(live_controller.optimization_decisions),
+            'timestamp': simulation_time
+        })
+    except Exception as e:
+        return jsonify({'success': False, 'message': str(e)})
+
+@app.route('/station_status', methods=['GET'])
+def get_station_status():
+    """Get current status of all stations and platform assignments"""
+    global live_controller
+    
+    if not live_controller or not LIVE_CONTROL_AVAILABLE:
+        return jsonify({'stations': {}, 'message': 'Live control not available'})
+    
+    try:
+        station_status = live_controller.get_station_status()
+        
+        return jsonify({
+            'success': True,
+            'stations': station_status,
+            'timestamp': simulation_time
+        })
+    except Exception as e:
+        return jsonify({'success': False, 'message': str(e)})
+
+@app.route('/pending_decisions', methods=['GET'])
+def get_pending_decisions():
+    """Get all pending optimization decisions requiring approval"""
+    global trains_data, actual_stations, actual_tracks
+    
+    if not MILP_AVAILABLE:
+        return jsonify({
+            'success': False,
+            'message': 'MILP optimizer not available',
+            'decisions': []
+        })
+    
+    try:
+        # Initialize optimizer to get pending decisions
+        optimizer = RailwayMILPOptimizer(trains_data, actual_stations, actual_tracks)
+        pending_decisions = optimizer.get_pending_decisions()
+        
+        # Add additional context for each decision
+        for decision in pending_decisions:
+            train_id = decision['train_id']
+            if train_id in trains_data:
+                train = trains_data[train_id]
+                decision['train_info'] = {
+                    'train_type': train.get('train_type', 'unknown'),
+                    'current_delay': train.get('delay', 0),
+                    'priority': train.get('priority', 'medium'),
+                    'stops': train.get('stops', [])
+                }
+        
+        return jsonify({
+            'success': True,
+            'decisions': pending_decisions,
+            'count': len(pending_decisions),
+            'timestamp': simulation_time
+        })
+    except Exception as e:
+        logger.error(f"Error getting pending decisions: {e}")
+        return jsonify({'success': False, 'message': str(e), 'decisions': []})
+
+@app.route('/approve_decision', methods=['POST'])
+def approve_decision():
+    """Approve a pending optimization decision"""
+    global trains_data, actual_stations, actual_tracks
+    
+    if not MILP_AVAILABLE:
+        return jsonify({
+            'success': False,
+            'message': 'MILP optimizer not available'
+        })
+    
+    try:
+        data = request.get_json()
+        decision_id = data.get('decision_id')
+        approval_reason = data.get('reason', 'Approved by operator')
+        
+        if not decision_id:
+            return jsonify({
+                'success': False,
+                'message': 'Decision ID is required'
+            })
+        
+        # Initialize optimizer and approve decision
+        optimizer = RailwayMILPOptimizer(trains_data, actual_stations, actual_tracks)
+        
+        # Find the decision in pending decisions
+        decision_found = None
+        for decision in optimizer.pending_decisions:
+            if decision.decision_id == decision_id:
+                decision_found = decision
+                break
+        
+        if not decision_found:
+            return jsonify({
+                'success': False,
+                'message': f'Decision {decision_id} not found in pending decisions'
+            })
+        
+        # Approve and apply the decision
+        success = optimizer.approve_decision(decision_id)
+        
+        if success and apply_optimization_decision(decision_found):
+            # Log the approval
+            logger.info(f"Decision {decision_id} approved and applied: {approval_reason}")
+            
+            # Add event for notifications
+            add_train_event(
+                decision_found.train_id,
+                'decision_approved',
+                decision_found.station or 'Network',
+                simulation_time
+            )
+            
+            return jsonify({
+                'success': True,
+                'message': f'Decision {decision_id} approved and applied successfully',
+                'decision_id': decision_id,
+                'train_id': decision_found.train_id,
+                'decision_type': decision_found.decision_type.value,
+                'impact': decision_found.impact_analysis
+            })
+        else:
+            return jsonify({
+                'success': False,
+                'message': f'Failed to approve or apply decision {decision_id}'
+            })
+            
+    except Exception as e:
+        logger.error(f"Error approving decision: {e}")
+        return jsonify({'success': False, 'message': str(e)})
+
+@app.route('/reject_decision', methods=['POST'])
+def reject_decision():
+    """Reject a pending optimization decision"""
+    global trains_data, actual_stations, actual_tracks
+    
+    if not MILP_AVAILABLE:
+        return jsonify({
+            'success': False,
+            'message': 'MILP optimizer not available'
+        })
+    
+    try:
+        data = request.get_json()
+        decision_id = data.get('decision_id')
+        rejection_reason = data.get('reason', 'Rejected by operator')
+        
+        if not decision_id:
+            return jsonify({
+                'success': False,
+                'message': 'Decision ID is required'
+            })
+        
+        # Initialize optimizer and reject decision
+        optimizer = RailwayMILPOptimizer(trains_data, actual_stations, actual_tracks)
+        success = optimizer.reject_decision(decision_id, rejection_reason)
+        
+        if success:
+            logger.info(f"Decision {decision_id} rejected: {rejection_reason}")
+            
+            return jsonify({
+                'success': True,
+                'message': f'Decision {decision_id} rejected',
+                'decision_id': decision_id,
+                'reason': rejection_reason
+            })
+        else:
+            return jsonify({
+                'success': False,
+                'message': f'Failed to reject decision {decision_id} (not found)'
+            })
+            
+    except Exception as e:
+        logger.error(f"Error rejecting decision: {e}")
+        return jsonify({'success': False, 'message': str(e)})
+        
+        success = live_controller.reject_decision(decision_id, rejection_reason)
+        
+        if success:
+            return jsonify({
+                'success': True,
+                'message': f'Decision {decision_id} rejected',
+                'decision_id': decision_id
+            })
+        else:
+            return jsonify({
+                'success': False,
+                'message': f'Failed to reject decision {decision_id}'
+            })
+            
+    except Exception as e:
+        return jsonify({'success': False, 'message': str(e)})
+
+@app.route('/decision_history', methods=['GET'])
+def get_decision_history():
+    """Get history of optimization decisions"""
+    global live_controller
+    
+    if not live_controller or not LIVE_CONTROL_AVAILABLE:
+        return jsonify({
+            'success': False,
+            'message': 'Live control not available',
+            'decisions': []
+        })
+    
+    try:
+        limit = request.args.get('limit', 50, type=int)
+        decision_history = live_controller.get_decision_history(limit)
+        
+        return jsonify({
+            'success': True,
+            'decisions': decision_history,
+            'count': len(decision_history),
+            'timestamp': simulation_time
+        })
+    except Exception as e:
+        return jsonify({'success': False, 'message': str(e)})
+
+@app.route('/optimization_stats', methods=['GET'])
+def get_optimization_stats():
+    """Get optimization performance statistics"""
+    global live_controller
+    
+    if not live_controller or not LIVE_CONTROL_AVAILABLE:
+        return jsonify({
+            'success': False,
+            'message': 'Live control not available',
+            'stats': {}
+        })
+    
+    try:
+        stats = live_controller.get_optimization_stats()
+        
+        # Add additional system stats
+        stats['simulation_time'] = simulation_time
+        stats['active_trains'] = len([p for p in train_positions.values() if p['status'] == 'running'])
+        stats['total_trains'] = len(trains_data)
+        
+        return jsonify({
+            'success': True,
+            'stats': stats,
+            'timestamp': simulation_time
+        })
+    except Exception as e:
+        return jsonify({'success': False, 'message': str(e)})
+
+@app.route('/live_control_settings', methods=['GET', 'POST'])
+def manage_live_control_settings():
+    """Get or update live control settings"""
+    global live_controller
+    
+    if not live_controller or not LIVE_CONTROL_AVAILABLE:
+        return jsonify({
+            'success': False,
+            'message': 'Live control not available'
+        })
+    
+    try:
+        if request.method == 'GET':
+            # Return current settings
+            return jsonify({
+                'success': True,
+                'settings': {
+                    'auto_approve_low_impact': live_controller.auto_approve_low_impact,
+                    'auto_approve_threshold': live_controller.auto_approve_threshold,
+                    'optimization_interval': live_controller.optimization_interval
+                }
+            })
+        
+        elif request.method == 'POST':
+            # Update settings
+            data = request.get_json()
+            
+            if 'auto_approve_low_impact' in data:
+                live_controller.auto_approve_low_impact = data['auto_approve_low_impact']
+            
+            if 'auto_approve_threshold' in data:
+                live_controller.auto_approve_threshold = float(data['auto_approve_threshold'])
+            
+            if 'optimization_interval' in data:
+                live_controller.optimization_interval = float(data['optimization_interval'])
+            
+            return jsonify({
+                'success': True,
+                'message': 'Settings updated successfully',
+                'settings': {
+                    'auto_approve_low_impact': live_controller.auto_approve_low_impact,
+                    'auto_approve_threshold': live_controller.auto_approve_threshold,
+                    'optimization_interval': live_controller.optimization_interval
+                }
+            })
+            
+    except Exception as e:
+        return jsonify({'success': False, 'message': str(e)})
+
+@app.route('/decision_notifications', methods=['GET'])
+def get_decision_notifications():
+    """Get real-time notifications about decisions and optimizations"""
+    global live_controller
+    
+    if not live_controller or not LIVE_CONTROL_AVAILABLE:
+        return jsonify({
+            'success': False,
+            'message': 'Live control not available',
+            'notifications': []
+        })
+    
+    try:
+        # Get recent live events
+        notifications = []
+        current_time = simulation_time
+        
+        for event in live_controller.live_events[-20:]:  # Last 20 events
+            if current_time - event.get('timestamp', 0) <= 60:  # Last minute
+                notifications.append(event)
+        
+        return jsonify({
+            'success': True,
+            'notifications': notifications,
+            'count': len(notifications),
+            'timestamp': current_time
+        })
+    except Exception as e:
+        return jsonify({'success': False, 'message': str(e)})
+
+@app.route('/optimization_results', methods=['GET'])
+def get_optimization_results():
+    """Get detailed optimization results and performance metrics"""
+    global trains_data, actual_stations, actual_tracks
+    
+    if not MILP_AVAILABLE:
+        return jsonify({
+            'success': False,
+            'message': 'MILP optimizer not available'
+        })
+    
+    try:
+        # Initialize optimizer to get system status
+        optimizer = RailwayMILPOptimizer(trains_data, actual_stations, actual_tracks)
+        system_status = optimizer.get_system_status()
+        
+        # Get recent optimization decisions
+        pending_decisions = optimizer.get_pending_decisions()
+        decision_history = optimizer.get_decision_history()
+        
+        # Calculate optimization impact
+        recent_decisions = [d for d in decision_history if d.get('timestamp', 0) > (time.time() - 3600)]  # Last hour
+        total_delay_reduction = sum(
+            abs(d.get('impact_analysis', {}).get('delay_change', 0)) 
+            for d in recent_decisions 
+            if d.get('impact_analysis', {}).get('delay_change', 0) < 0  # Negative means reduction
+        )
+        
+        # Create comprehensive results summary
+        results = {
+            'system_status': system_status,
+            'optimization_impact': {
+                'total_delay_reduction_1h': round(total_delay_reduction, 2),
+                'decisions_approved_1h': len([d for d in recent_decisions if d.get('status') == 'approved']),
+                'decisions_rejected_1h': len([d for d in recent_decisions if d.get('status') == 'rejected']),
+                'auto_applied_1h': len([d for d in recent_decisions if 'auto-applied' in d.get('approval_reason', '')])
+            },
+            'current_decisions': {
+                'pending_count': len(pending_decisions),
+                'pending_decisions': pending_decisions[:10],  # Show first 10
+                'high_priority_pending': len([d for d in pending_decisions if d.get('priority') == 'high'])
+            },
+            'train_performance': {
+                'on_time_performance': system_status.get('system_efficiency', 0),
+                'average_delay': system_status.get('average_delay', 0),
+                'most_delayed_trains': get_most_delayed_trains(5)
+            },
+            'recommendations': generate_system_recommendations(system_status, pending_decisions)
+        }
+        
+        return jsonify({
+            'success': True,
+            'results': results,
+            'timestamp': simulation_time,
+            'last_updated': time.time()
+        })
+        
+    except Exception as e:
+        logger.error(f"Error getting optimization results: {e}")
+        return jsonify({'success': False, 'message': str(e)})
+
+@app.route('/optimization_summary', methods=['GET'])
+def get_optimization_summary():
+    """Get a concise summary of optimization status for dashboard display"""
+    global trains_data
+    
+    try:
+        # Calculate real-time metrics
+        total_trains = len(trains_data)
+        delayed_trains = sum(1 for train in trains_data.values() if train.get('delay', 0) > 0)
+        total_delay = sum(train.get('delay', 0) for train in trains_data.values())
+        
+        # Get average delay
+        avg_delay = total_delay / total_trains if total_trains > 0 else 0
+        
+        # Calculate efficiency
+        on_time_trains = total_trains - delayed_trains
+        efficiency = (on_time_trains / total_trains * 100) if total_trains > 0 else 100
+        
+        # Status determination
+        if efficiency >= 90:
+            status = "Excellent"
+            status_color = "green"
+        elif efficiency >= 75:
+            status = "Good" 
+            status_color = "yellow"
+        elif efficiency >= 60:
+            status = "Fair"
+            status_color = "orange"
+        else:
+            status = "Poor"
+            status_color = "red"
+        
+        summary = {
+            'overall_status': status,
+            'status_color': status_color,
+            'efficiency_percent': round(efficiency, 1),
+            'total_trains': total_trains,
+            'on_time_trains': on_time_trains,
+            'delayed_trains': delayed_trains,
+            'total_delay_minutes': round(total_delay, 1),
+            'average_delay_minutes': round(avg_delay, 1),
+            'simulation_time': simulation_time,
+            'timestamp': time.time()
+        }
+        
+        # Add MILP-specific metrics if available
+        if MILP_AVAILABLE:
+            try:
+                optimizer = RailwayMILPOptimizer(trains_data, actual_stations, actual_tracks)
+                pending_decisions = optimizer.get_pending_decisions()
+                summary['pending_decisions'] = len(pending_decisions)
+                summary['high_priority_pending'] = len([d for d in pending_decisions if d.get('priority') == 'high'])
+            except:
+                summary['pending_decisions'] = 0
+                summary['high_priority_pending'] = 0
+        
+        return jsonify({
+            'success': True,
+            'summary': summary
+        })
+        
+    except Exception as e:
+        logger.error(f"Error generating optimization summary: {e}")
+        return jsonify({'success': False, 'message': str(e)})
+
+def get_most_delayed_trains(limit: int = 5) -> List[Dict]:
+    """Get the most delayed trains for reporting"""
+    delayed_trains = [
+        {
+            'train_id': train_id,
+            'delay': train.get('delay', 0),
+            'train_type': train.get('train_type', 'unknown'),
+            'priority': train.get('priority', 'medium'),
+            'stops': train.get('stops', [])
+        }
+        for train_id, train in trains_data.items()
+        if train.get('delay', 0) > 0
+    ]
+    
+    # Sort by delay (highest first)
+    delayed_trains.sort(key=lambda x: x['delay'], reverse=True)
+    return delayed_trains[:limit]
+
+def generate_system_recommendations(system_status: Dict, pending_decisions: List) -> List[str]:
+    """Generate system recommendations based on current status"""
+    recommendations = []
+    
+    efficiency = system_status.get('system_efficiency', 100)
+    avg_delay = system_status.get('average_delay', 0)
+    delayed_trains = system_status.get('delayed_trains', 0)
+    
+    # Efficiency-based recommendations
+    if efficiency < 60:
+        recommendations.append("System efficiency is poor - consider running immediate optimization")
+    elif efficiency < 80:
+        recommendations.append("System efficiency is below target - monitor for improvements")
+    
+    # Delay-based recommendations
+    if avg_delay > 10:
+        recommendations.append("High average delays detected - prioritize high-impact optimizations")
+    elif avg_delay > 5:
+        recommendations.append("Moderate delays present - consider preventive optimizations")
+    
+    # Decision-based recommendations
+    high_priority_pending = len([d for d in pending_decisions if d.get('priority') == 'high'])
+    if high_priority_pending > 0:
+        recommendations.append(f"{high_priority_pending} high-priority decisions pending approval")
+    
+    if len(pending_decisions) > 10:
+        recommendations.append("Many pending decisions - consider batch approval for low-impact items")
+    
+    # Train-specific recommendations
+    if delayed_trains > len(trains_data) * 0.3:  # More than 30% delayed
+        recommendations.append("Many trains delayed - consider system-wide optimization")
+    
+    # Default recommendation
+    if not recommendations:
+        recommendations.append("System operating normally - continue monitoring")
+    
+    return recommendations
 
 if __name__ == '__main__':
     print("Starting Railway DSS - Improved Backend...")
