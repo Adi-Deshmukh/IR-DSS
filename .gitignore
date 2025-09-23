@@ -1,0 +1,15 @@
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Python bytecode
+__pycache__/
+*.pyc
+
+# Other common ignores
+*.backup
+*.log
+*.egg-info/
+*.exe
+*.dll
