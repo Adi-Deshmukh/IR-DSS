@@ -1,3 +1,4 @@
+
 """
 Enhanced MILP Optimizer for Railway Decision Support System
 Based on Törnquist & Persson (2007) "N-tracked Railway Traffic Re-scheduling During Disturbances"
@@ -132,17 +133,26 @@ class RailwayMILPOptimizer:
         self.L: Dict[str, List[str]] = {segment_id: [] for segment_id in self.B}
 
         for train_id, train in self.initial_trains_data.items():
-            for i, stop in enumerate(train['stops']):
+            stops = train.get('stops', [])
+            if not stops:
+                continue
+
+            for i, stop in enumerate(stops):
+                if stop not in self.tracks:
+                    logger.warning(f"Station/segment '{stop}' for train '{train_id}' not found in track data. Skipping event.")
+                    continue
                 # Create station event
                 event_id = f"{train_id}_{stop}"
                 is_station = self.tracks[stop].is_station
 
                 # Simplified time calculation
-                journey_fraction = i / (len(train['stops']) - 1) if len(train['stops']) > 1 else 0
-                total_duration = train['base_arr_time'] - train['base_dep_time']
+                journey_fraction = i / (len(stops) - 1) if len(stops) > 1 else 0
+                base_dep = train.get('base_dep_time', 0)
+                base_arr = train.get('base_arr_time', 0)
+                total_duration = base_arr - base_dep if base_arr > base_dep else 0
                 
-                planned_arrival = train['base_dep_time'] + (total_duration * journey_fraction)
-                min_duration = 2.0 if is_station else 0 # 2 min dwell time
+                planned_arrival = base_dep + (total_duration * journey_fraction)
+                min_duration = 2.0 if is_station else 0 # 2 min dwell time at stations
                 planned_departure = planned_arrival + min_duration
 
                 event = TrainEvent(event_id, train_id, stop, is_station, planned_arrival, planned_departure, min_duration)
@@ -178,8 +188,9 @@ class RailwayMILPOptimizer:
         for train_id in self.T:
             # Sequencing constraint
             train_events = self.K[train_id]
-            for i in range(len(train_events) - 1):
-                prob += x_begin[train_events[i+1]] >= x_end[train_events[i]]
+            if len(train_events) > 1:
+                for i in range(len(train_events) - 1):
+                    prob += x_begin[train_events[i+1]] >= x_end[train_events[i]]
 
             # Final delay calculation
             if train_events:
@@ -194,15 +205,19 @@ class RailwayMILPOptimizer:
             for i, k1_id in enumerate(events_on_segment):
                 for j, k2_id in enumerate(events_on_segment):
                     if i < j:
+                        # Add ordering variable
+                        delta = pulp.LpVariable(f"delta_{k1_id}_{k2_id}", cat='Binary')
+                        
+                        # If two events are on the same track, they must be separated in time
                         for p in range(self.tracks[segment_id].num_tracks):
-                            # If two events are on the same track, they must be separated in time
-                            prob += x_begin[k2_id] >= x_end[k1_id] + headway - self.M * (3 - y_track[k1_id, p] - y_track[k2_id, p] - 1)
+                            prob += x_begin[k2_id] >= x_end[k1_id] + headway - self.M * (3 - y_track[(k1_id, p)] - y_track[(k2_id, p)] - delta)
+                            prob += x_begin[k1_id] >= x_end[k2_id] + headway - self.M * (2 - y_track[(k1_id, p)] - y_track[(k2_id, p)] + delta)
 
 
         # Apply disruptions
         if disrupted_trains:
             for train_id in disrupted_trains:
-                if train_id in self.initial_trains_data:
+                if train_id in self.initial_trains_data and self.K.get(train_id):
                     delay = self.initial_trains_data[train_id].get('delay', 0)
                     first_event_id = self.K[train_id][0]
                     first_event = self.E[first_event_id]
@@ -212,11 +227,12 @@ class RailwayMILPOptimizer:
         solver = pulp.PULP_CBC_CMD(timeLimit=self.max_optimization_time, msg=False)
         prob.solve(solver)
         
-        return self._process_results(prob, x_begin, x_end, z_final, start_time)
+        return self._process_results(prob, z_final, start_time)
 
-    def _process_results(self, prob, x_begin, x_end, z_final, start_time) -> OptimizationResult:
+    def _process_results(self, prob, z_final, start_time) -> OptimizationResult:
         computation_time = time.time() - start_time
         if prob.status != pulp.LpStatusOptimal:
+            logger.warning(f"Optimization finished with status: {pulp.LpStatus[prob.status]}")
             return OptimizationResult(pulp.LpStatus[prob.status], 0, 0, 0, [], computation_time)
 
         objective_value = pulp.value(prob.objective)
@@ -232,22 +248,22 @@ class RailwayMILPOptimizer:
             old_delay = self.initial_trains_data[train_id].get('delay', 0)
             
             # Create a decision if there's a significant change
-            if abs(new_delay - old_delay) > 1.0:
+            if abs(new_delay - old_delay) > 1.0: # More than 1 minute change
                 decision = self._create_decision(train_id, old_delay, new_delay)
                 decisions.append(decision)
                 self.pending_decisions[decision.decision_id] = decision
         
         return OptimizationResult(
             status="optimal",
-            objective_value=objective_value,
-            total_delay=optimized_total_delay,
-            delay_reduction=delay_reduction,
+            objective_value=objective_value or 0,
+            total_delay=optimized_total_delay or 0,
+            delay_reduction=delay_reduction or 0,
             decisions=decisions,
             computation_time=computation_time
         )
     
     def _create_decision(self, train_id, old_delay, new_delay) -> OptimizationDecision:
-        train = self.initial_trains_data[train_id]
+        train = self.initial_trains_data.get(train_id, {})
         delay_change = new_delay - old_delay
         
         return OptimizationDecision(
@@ -255,7 +271,7 @@ class RailwayMILPOptimizer:
             decision_type=DecisionType.FULL_OPTIMIZATION,
             timestamp=time.time(),
             train_id=train_id,
-            priority=train['priority'],
+            priority=train.get('priority', 'medium'),
             impact_analysis={'delay_change': delay_change},
             details={'old_delay': old_delay, 'new_delay': new_delay}
         )
@@ -300,13 +316,16 @@ class RailwayMILPOptimizer:
             return False
 
     def get_optimization_summary(self, result: OptimizationResult) -> Dict:
+        delay_before = sum(t.get('delay', 0) for t in self.initial_trains_data.values())
+        reduction_percent = (result.delay_reduction / delay_before * 100) if delay_before > 0 else 0
         return {
             "optimization_status": result.status,
             "computation_time": round(result.computation_time, 2),
             "objective_value": round(result.objective_value, 2),
-            "total_delay_before": round(sum(t.get('delay', 0) for t in self.initial_trains_data.values()), 2),
+            "total_delay_before": round(delay_before, 2),
             "total_delay_after": round(result.total_delay, 2),
             "delay_reduction": round(result.delay_reduction, 2),
+            "delay_reduction_percent": round(reduction_percent, 2),
             "decisions_generated": len(result.decisions)
         }
 
