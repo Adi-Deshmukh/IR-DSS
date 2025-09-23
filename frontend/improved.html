@@ -6,17 +6,23 @@
     <title>Railway DSS - Improved with Real Data</title>
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <style>
-        body { margin: 0; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
-        #map { height: 100vh; width: 100%; }
+        html, body { height: 100%; }
+        body { margin: 0; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; overflow-x: hidden; }
+        /* App layout: side-by-side map and dashboard */
+        .app-layout { display: flex; height: 100vh; width: 100%; overflow: hidden; }
+        #map { flex: 1 1 auto; height: 100%; width: calc(100% - 360px); }
         
         .control-panel {
-            position: absolute; top: 10px; right: 10px; background: white;
-            padding: 20px; border-radius: 12px; box-shadow: 0 4px 20px rgba(0,0,0,0.15);
-            z-index: 1000; min-width: 300px; max-height: 90vh; overflow-y: auto;
+            position: relative; background: white;
+            padding: 16px; box-shadow: 0 4px 20px rgba(0,0,0,0.15);
+            z-index: 10; width: 360px; max-width: 400px; height: 100vh; overflow-y: auto; box-sizing: border-box;
+            border-left: 1px solid #e6e6e6;
+            scrollbar-width: thin; /* Firefox */
+            scrollbar-color: #cfd8e3 transparent; /* Firefox */
         }
         
         .control-section {
-            margin-bottom: 20px; padding: 15px; background: #f8f9fa;
+            margin-bottom: 14px; padding: 14px; background: #f8f9fa;
             border-radius: 8px; border-left: 4px solid #3498db;
         }
         
@@ -449,18 +455,72 @@
         .metric-value {
             font-weight: bold;
         }
+
+        /* Dark mode overrides */
+        body.dark {
+            background: #0f141a;
+            color: #e6e9ed;
+        }
+        body.dark .control-panel { background: #151c24; box-shadow: 0 6px 24px rgba(0,0,0,0.6); border-left-color: #223042; }
+        
+        /* Panel header tidy */
+        .panel-header { position: sticky; top: 0; background: inherit; padding: 6px 0 8px 0; z-index: 5; }
+        .panel-header h2 { line-height: 1.2; }
+        .section-title { margin: 14px 0 8px 0; font-weight: 700; letter-spacing: .3px; }
+
+        /* Scrollbar styling for WebKit (Chrome/Edge) to visually cover right edge */
+        .control-panel::-webkit-scrollbar { width: 10px; }
+        .control-panel::-webkit-scrollbar-track { background: inherit; }
+        .control-panel::-webkit-scrollbar-thumb { background: #cfd8e3; border-radius: 8px; }
+        body.dark .control-panel::-webkit-scrollbar-thumb { background: #2b3a4c; }
+        body.dark .control-panel h2 { color: #e6e9ed; }
+        body.dark .control-section { background: #11171e; border-left-color: #6aa9ff; }
+        body.dark .status-display { background: #0f141a; border-color: #263241; }
+        body.dark .status-label { color: #9fb0c3; }
+        body.dark .status-value { color: #e6e9ed; }
+        body.dark .form-control { background: #0f141a; color: #e6e9ed; border-color: #263241; }
+        body.dark .legend { background: #151c24; color: #e6e9ed; }
+        body.dark .legend h4 { color: #e6e9ed; }
+        body.dark .notification { background: #151c24; color: #e6e9ed; border-left-color: #6aa9ff; }
+        body.dark .decision-item { background: #0f141a; border-color: #263241; }
+        body.dark .decision-item:hover { background: #11171e; border-color: #2b3a4c; }
+        body.dark .decision-popup { background: #151c24; border-left-color: #6aa9ff; }
+        body.dark .decision-popup-content h4 { color: #e6e9ed; }
+        body.dark .decision-popup-content p { color: #cdd7e1; }
+        body.dark .modal-content { background: #151c24; }
+        body.dark .modal-header { background: #223042; }
+        body.dark .metric-label { color: #9fb0c3; }
+        body.dark .train-marker { filter: drop-shadow(2px 2px 6px rgba(0,0,0,0.6)); }
+        /* Leaflet popups in dark mode */
+        body.dark .leaflet-popup-content-wrapper { background: #151c24; color: #e6e9ed; }
+        body.dark .leaflet-popup-tip { background: #151c24; }
+        body.dark .leaflet-control-attribution { background: rgba(15,20,26,0.7); color: #9fb0c3; }
     </style>
 </head>
 <body>
     <!-- Notification Container -->
     <div class="notification-container" id="notificationContainer"></div>
     
-    <!-- Map Container -->
-    <div id="map"></div>
+    <div class="app-layout">
+        <!-- Map Container -->
+        <div id="map"></div>
 
-    <!-- Control Panel -->
-    <div class="control-panel">
-        <h2 style="margin: 0 0 20px 0; color: #2c3e50;">🚂 Railway DSS</h2>
+        <!-- Control Panel -->
+        <aside class="control-panel" role="complementary">
+        <div class="panel-header" style="display: flex; align-items: center; justify-content: space-between; gap: 10px; margin: 0 0 12px 0;">
+            <h2 style="margin: 0; color: #2c3e50;">🚂 Railway DSS</h2>
+            <div style="display: flex; gap: 8px; align-items: center;">
+                <select id="basemapSelect" class="form-control" style="width: 150px; height: 34px;">
+                    <option value="satellite">Satellite</option>
+                    <option value="dark">Dark</option>
+                    <option value="light">Light</option>
+                    <option value="streets">Streets</option>
+                    <option value="topographic">Topographic</option>
+                    <option value="terrain">Terrain</option>
+                </select>
+                <button id="themeToggle" class="btn btn-secondary" title="Toggle dark mode" style="padding: 8px 12px;">🌙 Dark</button>
+            </div>
+        </div>
         
         <!-- Simulation Controls -->
         <div class="control-section">
@@ -654,7 +714,7 @@
                 <button id="viewHistoryBtn" class="btn btn-secondary" style="font-size: 12px; padding: 5px 10px; margin-left: 5px;">📊 History</button>
                 <button id="testDecisionsBtn" class="btn btn-warning" style="font-size: 12px; padding: 5px 10px; margin-left: 5px;" onclick="testDecisionSystem()">🧪 Test</button>
             </div>
-        </div>
+        </aside>
     </div>
 
     <!-- Decision Modal -->
@@ -803,11 +863,55 @@
             return t < 0.5 ? 2 * t * t : -1 + (4 - 2 * t) * t;
         }
 
-        // Initialize map
+        // Initialize map with light/dark basemaps
         map = L.map('map').setView([12.6, 77.2], 9);
-        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        const lightBase = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
             attribution: '© OpenStreetMap contributors'
-        }).addTo(map);
+        });
+        const darkBase = L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+            attribution: '© OpenStreetMap, © CARTO'
+        });
+        const satelliteBase = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+            attribution: 'Tiles © Esri — World Imagery'
+        });
+        const labelsOverlay = L.tileLayer('https://{s}.basemaps.cartocdn.com/light_only_labels/{z}/{x}/{y}{r}.png', {
+            attribution: '© OpenStreetMap, © CARTO labels',
+            pane: 'overlayPane'
+        });
+        const streetsBase = L.tileLayer('https://{s}.tile.openstreetmap.fr/hot/{z}/{x}/{y}.png', {
+            attribution: '© OpenStreetMap, HOT'
+        });
+        const topoBase = L.tileLayer('https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png', {
+            attribution: '© OpenStreetMap, SRTM | OpenTopoMap'
+        });
+        const terrainBase = L.tileLayer('https://stamen-tiles.a.ssl.fastly.net/terrain/{z}/{x}/{y}.jpg', {
+            attribution: 'Map tiles by Stamen Design, under CC BY 3.0 — Data © OpenStreetMap'
+        });
+        lightBase.addTo(map);
+        let currentBase = 'light';
+
+        function setBasemap(name) {
+            if (name === currentBase) return;
+            // Remove existing
+            if (currentBase === 'light') map.removeLayer(lightBase);
+            if (currentBase === 'dark') map.removeLayer(darkBase);
+            if (currentBase === 'satellite') { map.removeLayer(satelliteBase); if (map.hasLayer(labelsOverlay)) map.removeLayer(labelsOverlay); }
+            if (currentBase === 'streets') map.removeLayer(streetsBase);
+            if (currentBase === 'topographic') map.removeLayer(topoBase);
+            if (currentBase === 'terrain') map.removeLayer(terrainBase);
+            // Add new
+            if (name === 'light') { lightBase.addTo(map); }
+            if (name === 'dark') { darkBase.addTo(map); }
+            if (name === 'satellite') { satelliteBase.addTo(map); labelsOverlay.addTo(map); }
+            if (name === 'streets') { streetsBase.addTo(map); }
+            if (name === 'topographic') { topoBase.addTo(map); }
+            if (name === 'terrain') { terrainBase.addTo(map); }
+            currentBase = name;
+            try { localStorage.setItem('railway_basemap', name); } catch(e) {}
+            // Update selector if needed
+            const sel = document.getElementById('basemapSelect');
+            if (sel && sel.value !== name) sel.value = name;
+        }
 
         // Train status icons
         const TRAIN_ICONS = {
@@ -964,6 +1068,28 @@
                 speedSlider.value = 1.0;
                 document.getElementById('speedValue').textContent = '1.0';
                 setSimulationSpeed(1.0);
+            });
+            
+            // Basemap selector
+            const basemapSelect = document.getElementById('basemapSelect');
+            if (basemapSelect) {
+                basemapSelect.addEventListener('change', function() {
+                    setBasemap(this.value);
+                });
+            }
+
+            // Theme toggle
+            document.getElementById('themeToggle').addEventListener('click', function() {
+                const isDark = document.body.classList.toggle('dark');
+                if (isDark) {
+                    this.textContent = '☀️ Light';
+                    this.title = 'Toggle light mode';
+                } else {
+                    this.textContent = '🌙 Dark';
+                    this.title = 'Toggle dark mode';
+                }
+                // Persist preference
+                try { localStorage.setItem('railway_theme', isDark ? 'dark' : 'light'); } catch(e) {}
             });
             
             // Train management
@@ -1975,7 +2101,27 @@
         }
 
         // Initialize when page loads
-        document.addEventListener('DOMContentLoaded', init);
+        document.addEventListener('DOMContentLoaded', function() {
+            // Apply saved theme
+            try {
+                const saved = localStorage.getItem('railway_theme');
+                if (saved === 'dark') {
+                    document.body.classList.add('dark');
+                    const t = document.getElementById('themeToggle');
+                    if (t) { t.textContent = '☀️ Light'; t.title = 'Toggle light mode'; }
+                }
+                // Apply saved basemap or default to satellite
+                const savedBase = localStorage.getItem('railway_basemap');
+                if (savedBase) {
+                    setBasemap(savedBase);
+                } else {
+                    setBasemap('satellite');
+                }
+                const sel = document.getElementById('basemapSelect');
+                if (sel && sel.value !== currentBase) sel.value = currentBase;
+            } catch(e) {}
+            init();
+        });
     </script>
 </body>
 </html>
