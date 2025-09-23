@@ -143,6 +143,21 @@
                 <button id="stopBtn" class="btn btn-warning" disabled>⏸ Stop</button>
                 <button id="resetBtn" class="btn btn-danger">⏹ Reset</button>
             </div>
+            <div class="control-section">
+                <h3>Basemap</h3>
+                <div class="form-group">
+                  <label for="basemapSelect">Map style</label>
+                  <select id="basemapSelect" class="form-control">
+                    <option value="light">Light (OSM)</option>
+                    <option value="dark">Dark</option>
+                    <option value="satellite">Satellite</option>
+                    <option value="streets">Streets</option>
+                    <option value="topographic">Topographic</option>
+                    <option value="terrain">Terrain</option>
+                  </select>
+                </div>
+              </div>
+              
             <div class="status-display" style="margin-top: 15px;">
                 <div class="status-item"><span class="status-label">Status:</span><span id="status" class="status-value">Stopped</span></div>
                 <div class="status-item"><span class="status-label">Sim Time:</span><span id="simTime" class="status-value">00:00:00</span></div>
@@ -221,9 +236,88 @@
         }
 
         function setupMap() {
-            map = L.map('map').setView([12.6, 77.2], 9);
-            L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
-        }
+    // create map center + zoom
+    map = L.map('map').setView([12.6, 77.2], 9);
+
+    // define base layers
+    const lightBase = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        attribution: '© OpenStreetMap contributors'
+    });
+    const darkBase = L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+        attribution: '© OpenStreetMap, © CARTO'
+    });
+    const satelliteBase = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+        attribution: 'Tiles © Esri — World Imagery'
+    });
+    const labelsOverlay = L.tileLayer('https://{s}.basemaps.cartocdn.com/light_only_labels/{z}/{x}/{y}{r}.png', {
+        attribution: '© OpenStreetMap, © CARTO labels',
+        pane: 'overlayPane'
+    });
+    const streetsBase = L.tileLayer('https://{s}.tile.openstreetmap.fr/hot/{z}/{x}/{y}.png', {
+        attribution: '© OpenStreetMap, HOT'
+    });
+    const topoBase = L.tileLayer('https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png', {
+        attribution: '© OpenStreetMap, SRTM | OpenTopoMap'
+    });
+    const terrainBase = L.tileLayer('https://stamen-tiles.a.ssl.fastly.net/terrain/{z}/{x}/{y}.jpg', {
+        attribution: 'Map tiles by Stamen Design, under CC BY 3.0 — Data © OpenStreetMap'
+    });
+
+    // add default
+    lightBase.addTo(map);
+    let currentBase = 'light';
+
+    // expose setBasemap to the outer script scope (used elsewhere by your page if needed)
+    window.setBasemap = function(name) {
+        if (name === currentBase) return;
+        // Remove existing base
+        if (currentBase === 'light') map.removeLayer(lightBase);
+        if (currentBase === 'dark') map.removeLayer(darkBase);
+        if (currentBase === 'satellite') { map.removeLayer(satelliteBase); if (map.hasLayer(labelsOverlay)) map.removeLayer(labelsOverlay); }
+        if (currentBase === 'streets') map.removeLayer(streetsBase);
+        if (currentBase === 'topographic') map.removeLayer(topoBase);
+        if (currentBase === 'terrain') map.removeLayer(terrainBase);
+
+        // Add requested base
+        if (name === 'light') { lightBase.addTo(map); }
+        else if (name === 'dark') { darkBase.addTo(map); }
+        else if (name === 'satellite') { satelliteBase.addTo(map); labelsOverlay.addTo(map); }
+        else if (name === 'streets') { streetsBase.addTo(map); }
+        else if (name === 'topographic') { topoBase.addTo(map); }
+        else if (name === 'terrain') { terrainBase.addTo(map); }
+
+        // persist choice
+        try { localStorage.setItem('railway_basemap', name); } catch (e) {}
+
+        // update current
+        currentBase = name;
+
+        // ensure the selector reflects current base (if present)
+        const sel = document.getElementById('basemapSelect');
+        if (sel && sel.value !== name) sel.value = name;
+    };
+
+    // Attempt to restore saved basemap
+    try {
+        const saved = localStorage.getItem('railway_basemap') || 'light';
+        // slight delay to ensure map is ready
+        setTimeout(() => { window.setBasemap(saved); }, 50);
+    } catch (e) {
+        // ignore
+    }
+
+    // Hook up selector (if present)
+    const sel = document.getElementById('basemapSelect');
+    if (sel) {
+        // set initial selector value
+        try { sel.value = localStorage.getItem('railway_basemap') || 'light'; } catch(e) {}
+        sel.addEventListener('change', (ev) => {
+            const val = ev.target.value;
+            try { window.setBasemap(val); } catch (err) { console.error('setBasemap failed', err); }
+        });
+    }
+}
+
 
         async function loadStaticMapData() {
             const [tracksResponse, stationsResponse] = await Promise.all([
