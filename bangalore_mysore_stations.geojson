@@ -74,6 +74,23 @@
       "geometry": {
         "type": "Point",
         "coordinates": [
+          77.4778081,
+          12.9108775
+        ]
+      },
+      "properties": {
+        "name": "Bangarpet",
+        "id": "bangarpet",
+        "station_code": "Bangarpet",
+        "platforms": 2,
+        "dwell_time": 8
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
           77.1991535,
           12.6576198
         ]
